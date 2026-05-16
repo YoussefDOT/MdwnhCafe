@@ -56,20 +56,21 @@ const MOVE_SPEED = 5;
 const SPAWN_RADIUS = 100;
 
 // Asset Base Dimensions
-const BASE_BG_WIDTH = 3160;
-const BASE_BG_HEIGHT = 2210;
+const BASE_BG_WIDTH = 2390;
+const BASE_BG_HEIGHT = 1750;
 const BASE_TABLE_WIDTH = 1460;
 const BASE_TABLE_HEIGHT = 510;
 
-// Visual Scaling (Set to 1.0 to match real asset size)
-const ASSET_SCALE = 1.0;
+// Visual Scaling (Background/Shadow 50% larger, Table stays at 0.33)
+const BG_SCALE = 0.5; // 0.33 * 1.5
+const TABLE_SCALE = 0.33;
 
-const BG_WIDTH = BASE_BG_WIDTH * ASSET_SCALE;
-const BG_HEIGHT = BASE_BG_HEIGHT * ASSET_SCALE;
-const TABLE_WIDTH = BASE_TABLE_WIDTH * ASSET_SCALE;
-const TABLE_HEIGHT = BASE_TABLE_HEIGHT * ASSET_SCALE;
+const BG_WIDTH = BASE_BG_WIDTH * BG_SCALE;
+const BG_HEIGHT = BASE_BG_HEIGHT * BG_SCALE;
+const TABLE_WIDTH = BASE_TABLE_WIDTH * TABLE_SCALE;
+const TABLE_HEIGHT = BASE_TABLE_HEIGHT * TABLE_SCALE;
 
-// World Boundaries
+// World Boundaries (Updated for new BG size)
 const BOUNDS = {
     minX: -BG_WIDTH / 2 + PLAYER_SIZE / 2 + 10,
     maxX: BG_WIDTH / 2 - PLAYER_SIZE / 2 - 10,
@@ -476,7 +477,6 @@ function render() {
 
     drawConnections();
 
-    // Draw Animation Line UNDER players
     if (gameState.anim.active && (gameState.anim.phase === 'reach' || gameState.anim.phase === 'align' || gameState.anim.phase === 'pull')) {
         drawKidnapLine();
     }
@@ -493,7 +493,6 @@ function render() {
 
     ctx.restore();
 
-    // --- Focus/Darken Overlay ---
     if (gameState.focusAlpha > 0.01) {
         drawFocusMask(canvas);
     }
@@ -507,7 +506,7 @@ function drawKidnapLine() {
     const laptop = gameState.anim.laptop;
     const p = gameState.anim.progress;
     
-    ctx.strokeStyle = 'white'; // Changed to white as requested
+    ctx.strokeStyle = 'white'; 
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(laptop.x, laptop.y);
