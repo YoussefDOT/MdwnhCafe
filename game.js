@@ -12,8 +12,8 @@ const gameState = {
     keys: {},
     isDragging: false,
     dragStart: { x: 0, y: 0 },
-    selectedUser: null, // For login selection
-    positionInitialized: false // To prevent resets
+    selectedUser: null,
+    positionInitialized: false
 };
 
 // Constants - Colors from provided palette
@@ -148,13 +148,26 @@ function startGame(userData) {
     setupLogout();
     listenToPlayers();
     
-    // Position will be initialized via listenToPlayers or the explicit call
-    // But we'll wait a bit for listenToPlayers to get the current state
-    setTimeout(() => {
-        if (!gameState.positionInitialized) {
+    // Initial load from Firebase to set position
+    get(ref(database, `users/${gameState.userId}`)).then((snapshot) => {
+        const data = snapshot.val();
+        if (data && (data.x !== undefined && data.y !== undefined)) {
+            if (!gameState.players[gameState.userId]) {
+                gameState.players[gameState.userId] = {
+                    userId: gameState.userId,
+                    username: gameState.currentUser,
+                    x: data.x,
+                    y: data.y
+                };
+            } else {
+                gameState.players[gameState.userId].x = data.x;
+                gameState.players[gameState.userId].y = data.y;
+            }
+            gameState.positionInitialized = true;
+        } else {
             initializePlayerPosition();
         }
-    }, 500);
+    });
     
     gameLoop();
 }
@@ -168,12 +181,19 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 
 function setupControls() {
+    // Keyboard - Use e.code for layout-independent keys (WASD)
     window.addEventListener('keydown', (e) => {
-        gameState.keys[e.key.toLowerCase()] = true;
+        gameState.keys[e.code] = true;
     });
 
     window.addEventListener('keyup', (e) => {
-        gameState.keys[e.key.toLowerCase()] = false;
+        gameState.keys[e.code] = false;
+    });
+
+    // Clear keys on window blur to prevent "stuck" movement when alt-tabbing
+    window.addEventListener('blur', () => {
+        gameState.keys = {};
+        gameState.isDragging = false;
     });
 
     const canvas = gameState.canvas;
@@ -205,30 +225,22 @@ function setupLogout() {
 function initializePlayerPosition() {
     if (gameState.positionInitialized) return;
     
-    const player = gameState.players[gameState.userId];
+    const spawnX = (Math.random() - 0.5) * SPAWN_RADIUS;
+    const spawnY = (Math.random() - 0.5) * SPAWN_RADIUS;
     
-    // Check if we have a non-zero position in player object
-    const hasValidPos = player && (player.x !== 0 || player.y !== 0);
-    
-    if (!hasValidPos) {
-        const spawnX = (Math.random() - 0.5) * SPAWN_RADIUS;
-        const spawnY = (Math.random() - 0.5) * SPAWN_RADIUS;
-        
-        if (player) {
-            player.x = spawnX;
-            player.y = spawnY;
-        } else {
-            // Create a dummy local player if not loaded yet
-            gameState.players[gameState.userId] = {
-                userId: gameState.userId,
-                username: gameState.currentUser,
-                x: spawnX,
-                y: spawnY
-            };
-        }
-        updatePlayerPosition(spawnX, spawnY);
+    if (!gameState.players[gameState.userId]) {
+        gameState.players[gameState.userId] = {
+            userId: gameState.userId,
+            username: gameState.currentUser,
+            x: spawnX,
+            y: spawnY
+        };
+    } else {
+        gameState.players[gameState.userId].x = spawnX;
+        gameState.players[gameState.userId].y = spawnY;
     }
     
+    updatePlayerPosition(spawnX, spawnY);
     gameState.positionInitialized = true;
 }
 
@@ -238,11 +250,13 @@ function listenToPlayers() {
     onValue(usersRef, (snapshot) => {
         const users = snapshot.val();
         if (users) {
+            const currentIdsInSnapshot = new Set();
+            
             for (const [userId, userData] of Object.entries(users)) {
-                const isCurrentUser = userId === gameState.userId;
-                
                 if (userData.status === 'in-voice') {
-                    // If player doesn't exist locally, create them
+                    currentIdsInSnapshot.add(userId);
+                    const isCurrentUser = userId === gameState.userId;
+                    
                     if (!gameState.players[userId]) {
                         gameState.players[userId] = {
                             userId,
@@ -252,53 +266,32 @@ function listenToPlayers() {
                             x: userData.x || 0,
                             y: userData.y || 0
                         };
-                        
-                        if (isCurrentUser && (userData.x !== undefined && userData.x !== null)) {
-                            gameState.positionInitialized = true;
-                        }
                     } else {
-                        // Update existing player info
                         const player = gameState.players[userId];
                         player.username = userData.username;
                         player.channelName = userData.channelName;
                         player.avatar = userData.avatar;
                         
-                        // ONLY update position if NOT the current user
-                        // OR if the current user hasn't been initialized locally yet
+                        // Update position ONLY for other players
                         if (!isCurrentUser) {
                             player.x = userData.x || 0;
                             player.y = userData.y || 0;
-                        } else if (!gameState.positionInitialized) {
-                            if (userData.x !== undefined && userData.x !== null && (userData.x !== 0 || userData.y !== 0)) {
-                                player.x = userData.x;
-                                player.y = userData.y;
-                                gameState.positionInitialized = true;
-                            }
                         }
                     }
                     
-                    // Preload avatar if not in cache
                     if (userData.avatar && !gameState.avatarCache[userId]) {
                         const img = new Image();
                         img.crossOrigin = "anonymous";
                         img.src = userData.avatar;
-                        img.onload = () => {
-                            gameState.avatarCache[userId] = img;
-                        };
-                        img.onerror = () => {
-                            gameState.avatarCache[userId] = 'failed';
-                        };
+                        img.onload = () => { gameState.avatarCache[userId] = img; };
+                        img.onerror = () => { gameState.avatarCache[userId] = 'failed'; };
                     }
-                } else if (!isCurrentUser) {
-                    // Player is offline, remove them (but never remove current user)
-                    delete gameState.players[userId];
                 }
             }
 
-            // Cleanup any players who are no longer in the snapshot at all
+            // Cleanup offline players
             Object.keys(gameState.players).forEach(id => {
-                const isCurrentUser = id === gameState.userId;
-                if (!isCurrentUser && (!users[id] || users[id].status !== 'in-voice')) {
+                if (id !== gameState.userId && !currentIdsInSnapshot.has(id)) {
                     delete gameState.players[id];
                 }
             });
@@ -327,10 +320,11 @@ function handleMovement() {
     let dx = 0;
     let dy = 0;
 
-    if (gameState.keys['w'] || gameState.keys['arrowup']) dy -= MOVE_SPEED;
-    if (gameState.keys['s'] || gameState.keys['arrowdown']) dy += MOVE_SPEED;
-    if (gameState.keys['a'] || gameState.keys['arrowleft']) dx -= MOVE_SPEED;
-    if (gameState.keys['d'] || gameState.keys['arrowright']) dx += MOVE_SPEED;
+    // Use e.code values (KeyW, ArrowUp, etc.) for consistency across layouts
+    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) dy -= MOVE_SPEED;
+    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) dy += MOVE_SPEED;
+    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) dx -= MOVE_SPEED;
+    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) dx += MOVE_SPEED;
 
     if (dx !== 0 || dy !== 0) {
         player.x += dx;
