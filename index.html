@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مدونة ستوديو | مساحة العمل الرقمية</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- شاشة تسجيل الدخول: قائمة المستخدمين -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="logo-container">
+                <img src="مدونة ستوديو - شعار أيقوني1 نصي عربي إنجليزي.png" alt="مدونة ستوديو Logo">
+            </div>
+            <h2 class="title">اختر هويتك</h2>
+            <p class="subtitle">انقر على صورتك للدخول إلى مساحة العمل الرقمية</p>
+            
+            <div id="user-list" class="user-list">
+                <div class="loading-users">
+                    <p>جاري تحميل قائمة المستخدمين المتصلين...</p>
+                </div>
+            </div>
+            
+            <p class="error-msg" id="error-msg"></p>
+        </div>
+    </div>
+
+    <!-- نافذة التأكيد -->
+    <div id="confirm-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>تأكيد الدخول</h3>
+            <p>هل أنت متأكد من الدخول بهذه الهوية؟</p>
+            
+            <div class="confirm-user-info">
+                <img id="confirm-avatar" src="" alt="Avatar">
+                <div class="details">
+                    <span id="confirm-name"></span>
+                    <span id="confirm-channel"></span>
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button id="modal-confirm" class="btn-primary">نعم، أدخل الآن</button>
+                <button id="modal-cancel" class="btn-secondary">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- شاشة اللعبة / المساحة -->
+    <div id="game-screen" class="screen">
+        <div class="hud">
+            <div class="hud-right">
+                <div class="user-badge">
+                    <span class="status-dot"></span>
+                    <div class="user-info">
+                        <span id="current-user">جاري التحميل...</span>
+                        <span id="channel-name"></span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="hud-left">
+                <span id="player-count" class="player-stat">0 مستخدمين</span>
+                <button id="logout-btn" class="logout-btn">خروج</button>
+            </div>
+        </div>
+
+        <canvas id="game-canvas"></canvas>
+
+        <div class="controls-hint">
+            <p>استخدم WASD أو الأسهم للتحرك • اسحب بالماوس لتحريك الكاميرا</p>
+        </div>
+    </div>
+
+    <!-- البرمجيات -->
+    <script type="module" src="firebase-config.js"></script>
+    <script type="module" src="game.js"></script>
+</body>
+</html>
