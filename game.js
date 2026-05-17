@@ -1,18 +1,370 @@
-import { database, ref, onValue, update, get } from './firebase-config.js';
+import { database, ref, onValue, update, get, onDisconnect, set } from './firebase-config.js';
+
+class FocusAudioEngine {
+    constructor() {
+        this.ctx = null;
+        this.sampleRate = 44100;
+        this.masterGain = null;
+        this.overallVolume = 0.5;
+        this.sounds = {
+            plane: { active: false, volume: 0.5, nodes: null },
+            rain_muffled: { active: false, volume: 0.5, nodes: null },
+            white_muffled: { active: false, volume: 0.5, nodes: null },
+            brown_muffled: { active: false, volume: 0.5, nodes: null },
+            wind: { active: false, volume: 0.5, nodes: null }
+        };
+        // Normalized ambient silent levels
+        this.baseVolumeScale = {
+            plane: 0.09,
+            rain_muffled: 0.15,
+            white_muffled: 0.05,
+            brown_muffled: 0.21,
+            wind: 0.09
+        };
+        this.buffers = {
+            timeBreak: null,
+            timeReturn: null,
+            kidnap: null
+        };
+    }
+
+    init() {
+        if (this.ctx) return;
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.sampleRate = this.ctx.sampleRate;
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.setValueAtTime(0.5 * this.overallVolume, this.ctx.currentTime);
+        this.masterGain.connect(this.ctx.destination);
+        this.loadSoundEffects();
+    }
+
+    async loadSoundEffects() {
+        try {
+            const loadBuffer = async (url) => {
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
+                return await this.ctx.decodeAudioData(arrayBuffer);
+            };
+            this.buffers.timeBreak = await loadBuffer('Sound/TimeBreak.mp3');
+            this.buffers.timeReturn = await loadBuffer('Sound/TimeReturn.mp3');
+            this.buffers.kidnap = await loadBuffer('Sound/LaptopGrab.mp3');
+        } catch(e) {
+            console.log("Failed to load Web Audio sound effects:", e);
+        }
+    }
+
+    playEffect(name) {
+        if (!this.ctx) this.init();
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(e=>{});
+        }
+        const buffer = this.buffers[name];
+        if (!buffer) {
+            if (gameState.sounds[name]) {
+                gameState.sounds[name].pause();
+                gameState.sounds[name].currentTime = 0;
+                gameState.sounds[name].play().catch(e=>{});
+            }
+            return;
+        }
+        try {
+            const source = this.ctx.createBufferSource();
+            source.buffer = buffer;
+            const gainNode = this.ctx.createGain();
+            gainNode.gain.setValueAtTime(0.8, this.ctx.currentTime);
+            source.connect(gainNode);
+            gainNode.connect(this.ctx.destination);
+            source.start();
+        } catch(err) {
+            console.log("Web Audio effect play failed, using fallback:", err);
+            if (gameState.sounds[name]) {
+                gameState.sounds[name].play().catch(e=>{});
+            }
+        }
+    }
+
+    createWhiteNoiseNode() {
+        const bufferSize = 2 * this.sampleRate;
+        const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            output[i] = Math.random() * 2 - 1;
+        }
+        const whiteNoise = this.ctx.createBufferSource();
+        whiteNoise.buffer = noiseBuffer;
+        whiteNoise.loop = true;
+        return whiteNoise;
+    }
+
+    createBrownNoiseNode() {
+        const bufferSize = 2 * this.sampleRate;
+        const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        let lastOut = 0.0;
+        for (let i = 0; i < bufferSize; i++) {
+            const white = Math.random() * 2 - 1;
+            output[i] = (lastOut + (0.02 * white)) / 1.02;
+            lastOut = output[i];
+            output[i] *= 3.5;
+        }
+        const brownNoise = this.ctx.createBufferSource();
+        brownNoise.buffer = noiseBuffer;
+        brownNoise.loop = true;
+        return brownNoise;
+    }
+
+    startSound(name) {
+        if (!this.ctx) this.init();
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+
+        const sound = this.sounds[name];
+        if (sound.nodes) return; 
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(0, this.ctx.currentTime); 
+        gainNode.connect(this.masterGain);
+
+        let source = null;
+        let secondaryNodes = [];
+
+        if (name === 'white') {
+            source = this.createWhiteNoiseNode();
+            source.connect(gainNode);
+            source.start();
+        } else if (name === 'white_muffled') {
+            source = this.createWhiteNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(250, this.ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            source.start();
+            secondaryNodes.push(filter);
+        } else if (name === 'brown') {
+            source = this.createBrownNoiseNode();
+            source.connect(gainNode);
+            source.start();
+        } else if (name === 'brown_muffled') {
+            source = this.createBrownNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(150, this.ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            source.start();
+            secondaryNodes.push(filter);
+        } else if (name === 'rain') {
+            source = this.createWhiteNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+            filter.Q.setValueAtTime(0.8, this.ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            source.start();
+            secondaryNodes.push(filter);
+        } else if (name === 'rain_muffled') {
+            source = this.createWhiteNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(500, this.ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            source.start();
+            secondaryNodes.push(filter);
+        } else if (name === 'wind') {
+            source = this.createBrownNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(400, this.ctx.currentTime);
+            filter.Q.setValueAtTime(2.0, this.ctx.currentTime);
+            
+            const lfo = this.ctx.createOscillator();
+            lfo.frequency.setValueAtTime(0.08, this.ctx.currentTime);
+            
+            const lfoGain = this.ctx.createGain();
+            lfoGain.gain.setValueAtTime(250, this.ctx.currentTime);
+            
+            lfo.connect(lfoGain);
+            lfoGain.connect(filter.frequency);
+            
+            source.connect(filter);
+            filter.connect(gainNode);
+            
+            source.start();
+            lfo.start();
+            
+            secondaryNodes.push(filter, lfo, lfoGain);
+        } else if (name === 'plane') {
+            source = this.createBrownNoiseNode();
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(150, this.ctx.currentTime);
+            source.connect(filter);
+            filter.connect(gainNode);
+            
+            const osc1 = this.ctx.createOscillator();
+            osc1.frequency.setValueAtTime(60, this.ctx.currentTime);
+            const osc1Gain = this.ctx.createGain();
+            osc1Gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+            osc1.connect(osc1Gain);
+            osc1Gain.connect(gainNode);
+            
+            const osc2 = this.ctx.createOscillator();
+            osc2.frequency.setValueAtTime(90, this.ctx.currentTime);
+            const osc2Gain = this.ctx.createGain();
+            osc2Gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+            osc2.connect(osc2Gain);
+            osc2Gain.connect(gainNode);
+            
+            source.start();
+            osc1.start();
+            osc2.start();
+            
+            secondaryNodes.push(filter, osc1, osc1Gain, osc2, osc2Gain);
+        }
+
+        sound.nodes = { source, gainNode, secondaryNodes };
+        const scaledVol = sound.volume * this.baseVolumeScale[name];
+        gainNode.gain.linearRampToValueAtTime(scaledVol, this.ctx.currentTime + 1.5);
+    }
+
+    stopSound(name) {
+        const sound = this.sounds[name];
+        if (!sound.nodes) return;
+
+        const gainNode = sound.nodes.gainNode;
+        const nodesToStop = [sound.nodes.source, ...sound.nodes.secondaryNodes];
+
+        gainNode.gain.setValueAtTime(gainNode.gain.value, this.ctx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+
+        setTimeout(() => {
+            nodesToStop.forEach(n => {
+                try {
+                    n.stop();
+                } catch(e) {}
+                try {
+                    n.disconnect();
+                } catch(e) {}
+            });
+            if (sound.nodes) {
+                sound.nodes.gainNode.disconnect();
+                sound.nodes = null;
+            }
+        }, 600);
+    }
+
+    updateVolume(name, val) {
+        const sound = this.sounds[name];
+        sound.volume = parseFloat(val);
+        if (sound.nodes) {
+            const scaledVol = sound.volume * this.baseVolumeScale[name];
+            sound.nodes.gainNode.gain.setValueAtTime(scaledVol, this.ctx.currentTime);
+        }
+    }
+
+    updateOverallVolume(val) {
+        this.overallVolume = parseFloat(val);
+        if (this.masterGain && gameState.pomodoro.active && gameState.pomodoro.phase === 'work') {
+            this.masterGain.gain.setValueAtTime(this.overallVolume, this.ctx.currentTime);
+        }
+        this.saveToFirebase();
+    }
+
+    toggle(name) {
+        const sound = this.sounds[name];
+        sound.active = !sound.active;
+        if (sound.active) {
+            this.startSound(name);
+        } else {
+            this.stopSound(name);
+        }
+        this.saveToFirebase();
+    }
+
+    fadeToMaster(targetVolume, duration) {
+        if (!this.ctx) this.init();
+        const targetGain = targetVolume * this.overallVolume;
+        this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, this.ctx.currentTime);
+        this.masterGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + duration);
+    }
+
+    applyState(mixState) {
+        if (!mixState) return;
+        this.init();
+        
+        // Restore overall mix volume
+        if (mixState.overallVolume !== undefined) {
+            this.overallVolume = mixState.overallVolume;
+            const slider = document.getElementById('overall-vol');
+            if (slider) slider.value = this.overallVolume;
+            if (this.masterGain && gameState.pomodoro.active && gameState.pomodoro.phase === 'work') {
+                this.masterGain.gain.setValueAtTime(this.overallVolume, this.ctx.currentTime);
+            }
+        }
+
+        for (const [name, config] of Object.entries(mixState)) {
+            if (this.sounds[name]) {
+                this.sounds[name].active = config.active;
+                this.sounds[name].volume = config.volume !== undefined ? config.volume : 0.5;
+                
+                const el = document.querySelector(`.sound-item[data-sound="${name}"]`);
+                if (el) {
+                    if (config.active) el.classList.add('active');
+                    else el.classList.remove('active');
+                    el.querySelector('.sound-vol').value = this.sounds[name].volume;
+                }
+
+                if (gameState.pomodoro.active && gameState.pomodoro.phase === 'work') {
+                    if (config.active) {
+                        this.startSound(name);
+                    } else {
+                        this.stopSound(name);
+                    }
+                }
+            }
+        }
+    }
+
+    saveToFirebase() {
+        if (!gameState.userId) return;
+        const mixState = {
+            overallVolume: this.overallVolume
+        };
+        for (const [name, config] of Object.entries(this.sounds)) {
+            mixState[name] = { active: config.active, volume: config.volume };
+        }
+        const updates = {};
+        updates[`users/${gameState.userId}/focusMix`] = mixState;
+        update(ref(database), updates);
+    }
+
+    stopAll() {
+        for (const name of Object.keys(this.sounds)) {
+            this.stopSound(name);
+            this.sounds[name].active = false;
+        }
+    }
+}
 
 // Game State
 const gameState = {
     currentUser: null,
     userId: null,
     players: {},
-    avatarCache: {}, // Cache for loaded avatar images
+    avatarCache: {}, 
     assets: {
         bg: new Image(),
         shadow: new Image(),
         tables: new Image()
     },
     sounds: {
-        kidnap: new Audio('Sound/LaptopGrab.mp3')
+        kidnap: new Audio('Sound/LaptopGrab.mp3'),
+        timeBreak: new Audio('Sound/TimeBreak.mp3'),
+        timeReturn: new Audio('Sound/TimeReturn.mp3')
     },
     canvas: null,
     ctx: null,
@@ -24,11 +376,14 @@ const gameState = {
     windParticles: [],
     laptops: [],
     activeLaptop: null,
-    lastActiveLaptop: null,
     isLockedIn: false,
     focusAlpha: 0,
     lastTime: 0,
     dtFactor: 1.0,
+    dustParticles: [],
+    windSpeedMultiplier: 1.0,
+    focusFogAlpha: 0.0,
+    focusAudioEngine: null,
     
     // Animation State
     anim: {
@@ -39,11 +394,24 @@ const gameState = {
         startPos: { x: 0, y: 0 },
         intermediatePos: { x: 0, y: 0 },
         targetPos: { x: 0, y: 0 }
+    },
+    // Pomodoro State
+    pomodoro: {
+        active: false,
+        laptopId: null,
+        phase: 'none', 
+        endTime: 0,
+        sessionsLeft: 0,
+        workDuration: 25,
+        breakDuration: 5,
+        totalSessions: 1
     }
 };
 
 // Preload Sound
 gameState.sounds.kidnap.preload = 'auto';
+gameState.sounds.timeBreak.preload = 'auto';
+gameState.sounds.timeReturn.preload = 'auto';
 
 // Constants
 const COLORS = {
@@ -85,8 +453,8 @@ const TABLE_OFFSET = 40;
 const TABLE_BOX = {
     minX: BG_WIDTH / 2 - TABLE_WIDTH - TABLE_OFFSET,
     maxX: BG_WIDTH / 2 - TABLE_OFFSET,
-    minY: -BG_HEIGHT / 2 + TABLE_OFFSET,
-    maxY: -BG_HEIGHT / 2 + TABLE_HEIGHT + TABLE_OFFSET
+    minY: -TABLE_HEIGHT / 2,
+    maxY: TABLE_HEIGHT / 2
 };
 
 // Camera & Wind Settings
@@ -175,12 +543,25 @@ function setupUserSelection() {
         userListContainer.innerHTML = '';
         onlineUsers.forEach(([userId, userData]) => {
             const userItem = document.createElement('div');
-            userItem.className = 'user-item';
+            const isActive = userData.activeInGame === true;
+            userItem.className = 'user-item' + (isActive ? ' disabled' : '');
+            
             const avatarHtml = userData.avatar 
                 ? `<img src="${userData.avatar}" alt="${userData.username}">`
                 : `<div class="placeholder-avatar">${userData.username.charAt(0).toUpperCase()}</div>`;
-            userItem.innerHTML = `<div class="avatar-circle">${avatarHtml}</div><div class="name">${userData.username}</div><div class="channel">${userData.channelName || 'قناة صوتية'}</div>`;
-            userItem.addEventListener('click', () => showConfirmModal({ userId, ...userData }));
+            
+            const statusHtml = isActive ? '<div class="in-game-status">داخل اللعبة</div>' : '';
+            
+            userItem.innerHTML = `
+                ${statusHtml}
+                <div class="avatar-circle">${avatarHtml}</div>
+                <div class="name">${userData.username}</div>
+                <div class="channel">${userData.channelName || 'قناة صوتية'}</div>
+            `;
+            
+            if (!isActive) {
+                userItem.addEventListener('click', () => showConfirmModal({ userId, ...userData }));
+            }
             userListContainer.appendChild(userItem);
         });
     });
@@ -202,9 +583,46 @@ function showConfirmModal(userData) {
     document.getElementById('confirm-modal').classList.add('active');
 }
 
+function playSoundRobust(audioElement) {
+    if (!audioElement) return;
+    try {
+        audioElement.pause();
+        audioElement.currentTime = 0;
+        const p = audioObjPlayHelper(audioElement);
+        if (p !== undefined) {
+            p.catch(e => {
+                console.log("Audio play blocked by browser, queueing on user gesture...", e);
+                const playOnGesture = () => {
+                    audioObjPlayHelper(audioElement).catch(err => {});
+                    document.removeEventListener('click', playOnGesture);
+                    document.removeEventListener('keydown', playOnGesture);
+                };
+                document.addEventListener('click', playOnGesture);
+                document.addEventListener('keydown', playOnGesture);
+            });
+        }
+    } catch(err) {
+        console.log("Failed to play sound:", err);
+    }
+}
+
+function audioObjPlayHelper(el) {
+    return el.play();
+}
+
 function startGame(userData) {
     gameState.currentUser = userData.username;
     gameState.userId = userData.userId;
+
+    // Initialize Focus Audio Engine & Setup Focus UI
+    gameState.focusAudioEngine = new FocusAudioEngine();
+    setupFocusPanelUI();
+
+    // Set active presence in game and set up disconnect presence cleanup
+    const activeRef = ref(database, `users/${gameState.userId}/activeInGame`);
+    set(activeRef, true);
+    onDisconnect(activeRef).set(false);
+
     document.getElementById('login-screen').classList.remove('active');
     document.getElementById('game-screen').classList.add('active');
     document.getElementById('current-user').textContent = userData.username;
@@ -213,20 +631,73 @@ function startGame(userData) {
     gameState.ctx = gameState.canvas.getContext('2d');
     resizeCanvas();
     setupControls();
+    setupPomodoroUI();
     setupLogout();
     listenToPlayers();
-    get(ref(database, `users/${gameState.userId}`)).then((snapshot) => {
-        const data = snapshot.val();
-        if (data && (data.x !== undefined && data.y !== undefined) && data.x !== 0) {
-            if (checkCollision(data.x, data.y)) { initializePlayerPosition(); } 
-            else {
-                if (!gameState.players[gameState.userId]) {
-                    gameState.players[gameState.userId] = { userId: gameState.userId, username: gameState.currentUser, x: data.x, y: data.y };
-                }
-                gameState.positionInitialized = true;
+    listenToPomodoro();
+    get(ref(database, 'pomodoro')).then((pomoSnapshot) => {
+        const pomoData = pomoSnapshot.val() || {};
+        let activeLaptopId = null;
+        for (const [lapId, state] of Object.entries(pomoData)) {
+            if (state && state.claimedBy === gameState.userId) {
+                activeLaptopId = parseInt(lapId);
+                gameState.pomodoro.active = true;
+                gameState.pomodoro.laptopId = activeLaptopId;
+                gameState.pomodoro.phase = state.phase;
+                gameState.pomodoro.endTime = state.endTime;
+                gameState.pomodoro.sessionsLeft = state.sessionsLeft;
+                gameState.pomodoro.workDuration = state.workDuration;
+                gameState.pomodoro.breakDuration = state.breakDuration || 5;
+                gameState.pomodoro.totalSessions = state.totalSessions || state.sessionsLeft || 1;
+                
+                break;
             }
-        } else { initializePlayerPosition(); }
+        }
+        
+        get(ref(database, `users/${gameState.userId}`)).then((snapshot) => {
+            const data = snapshot.val();
+            let spawnX = 0, spawnY = BG_HEIGHT / 4;
+            let locked = false;
+
+            // Restore Focus Mix from User Profile instead of session!
+            if (data && data.focusMix && gameState.focusAudioEngine) {
+                gameState.focusAudioEngine.applyState(data.focusMix);
+            }
+
+            if (gameState.pomodoro.active && gameState.pomodoro.phase === 'work') {
+                const panel = document.getElementById('focus-sounds-panel');
+                if (panel) panel.classList.add('active');
+            }
+
+            if (activeLaptopId !== null) {
+                const laptop = gameState.laptops.find(l => l.id === activeLaptopId);
+                if (laptop) {
+                    spawnX = laptop.sitX;
+                    spawnY = laptop.sitY;
+                    if (gameState.pomodoro.phase === 'work' || gameState.pomodoro.phase === 'wait') locked = true;
+                }
+            } else if (data && (data.x !== undefined && data.y !== undefined) && data.x !== 0 && !checkCollision(data.x, data.y)) {
+                spawnX = data.x;
+                spawnY = data.y;
+            }
+            
+            if (!gameState.players[gameState.userId]) {
+                gameState.players[gameState.userId] = { userId: gameState.userId, username: gameState.currentUser, x: spawnX, y: spawnY };
+            } else {
+                gameState.players[gameState.userId].x = spawnX;
+                gameState.players[gameState.userId].y = spawnY;
+            }
+            updatePlayerPosition(spawnX, spawnY);
+            gameState.positionInitialized = true;
+            if (locked) gameState.isLockedIn = true;
+        });
     });
+
+    // Background interval to keep Pomodoro ticking and transition correctly even if requestAnimationFrame throttles/pauses
+    setInterval(() => {
+        updatePomodoro();
+    }, 500);
+
     gameLoop();
 }
 
@@ -240,9 +711,6 @@ window.addEventListener('resize', resizeCanvas);
 
 function setupControls() {
     window.addEventListener('keydown', (e) => { 
-        if (e.code === 'Escape' && gameState.isLockedIn) {
-            gameState.isLockedIn = false;
-        }
         gameState.keys[e.code] = true; 
     });
     window.addEventListener('keyup', (e) => { gameState.keys[e.code] = false; });
@@ -254,15 +722,49 @@ function setupControls() {
     }, { passive: false });
 
     gameState.canvas.addEventListener('mousedown', (e) => {
+        if (gameState.pomodoro.active) return; // Completely disable starting another Pomodoro
         if (gameState.activeLaptop && !gameState.isLockedIn && !gameState.anim.active) {
-            startKidnapAnimation(gameState.activeLaptop);
+            if (gameState.activeLaptop.claimedBy) return; // Ignore if claimed
+            document.getElementById('pomodoro-modal').classList.add('active');
         }
     });
+
+    // Global gesture listener to resume Web Audio Context on first player input
+    const resumeAudioEngine = () => {
+        if (gameState.focusAudioEngine) {
+            gameState.focusAudioEngine.init();
+            if (gameState.focusAudioEngine.ctx && gameState.focusAudioEngine.ctx.state === 'suspended') {
+                gameState.focusAudioEngine.ctx.resume().then(() => {
+                    if (gameState.pomodoro.active && gameState.pomodoro.phase === 'work') {
+                        for (const [name, config] of Object.entries(gameState.focusAudioEngine.sounds)) {
+                            if (config.active) {
+                                gameState.focusAudioEngine.startSound(name);
+                            }
+                        }
+                    }
+                }).catch(e=>{});
+            }
+        }
+    };
+    window.addEventListener('click', resumeAudioEngine);
+    window.addEventListener('keydown', resumeAudioEngine);
 }
 
 function startKidnapAnimation(laptop) {
     const player = gameState.players[gameState.userId];
     if (!player) return;
+
+    if (document.hidden) {
+        // Skip animation in background, teleport player, lock in, and start work immediately!
+        player.x = laptop.sitX;
+        player.y = laptop.sitY;
+        updatePlayerPosition(laptop.sitX, laptop.sitY);
+        gameState.isLockedIn = true;
+        if (gameState.pomodoro.active && gameState.pomodoro.phase === 'wait') {
+            startPomodoroPhase('work');
+        }
+        return;
+    }
 
     gameState.anim.active = true;
     gameState.anim.phase = 'reach';
@@ -271,12 +773,198 @@ function startKidnapAnimation(laptop) {
     gameState.anim.startPos = { x: player.x, y: player.y };
 
     // Play Sound
-    gameState.sounds.kidnap.currentTime = 0;
-    gameState.sounds.kidnap.play().catch(e => console.log("Audio play failed:", e));
+    if (gameState.focusAudioEngine) {
+        gameState.focusAudioEngine.playEffect('kidnap');
+    } else {
+        playSoundRobust(gameState.sounds.kidnap);
+    }
+}
+
+function setupFocusPanelUI() {
+    const items = document.querySelectorAll('.sound-item');
+    items.forEach(item => {
+        const soundName = item.dataset.sound;
+        const btn = item.querySelector('.sound-toggle-btn');
+        const slider = item.querySelector('.sound-vol');
+        
+        btn.addEventListener('click', () => {
+            if (!gameState.focusAudioEngine) return;
+            gameState.focusAudioEngine.toggle(soundName);
+            if (gameState.focusAudioEngine.sounds[soundName].active) {
+                item.classList.add('active');
+            } else {
+                item.classList.remove('active');
+            }
+        });
+        
+        slider.addEventListener('input', (e) => {
+            if (!gameState.focusAudioEngine) return;
+            gameState.focusAudioEngine.updateVolume(soundName, e.target.value);
+            gameState.focusAudioEngine.saveToFirebase();
+        });
+    });
+
+    const masterSlider = document.getElementById('overall-vol');
+    if (masterSlider) {
+        masterSlider.addEventListener('input', (e) => {
+            if (!gameState.focusAudioEngine) return;
+            gameState.focusAudioEngine.updateOverallVolume(e.target.value);
+        });
+    }
+}
+
+function setupPomodoroUI() {
+    const modal = document.getElementById('pomodoro-modal');
+    const cancelBtn = document.getElementById('pomodoro-cancel');
+    const confirmBtn = document.getElementById('pomodoro-confirm');
+
+    ['work', 'break', 'session'].forEach(type => {
+        const btns = document.querySelectorAll(`#${type}-options .opt-btn`);
+        const input = document.getElementById(`custom-${type}`);
+        
+        btns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                btns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                input.value = '';
+            });
+        });
+
+        input.addEventListener('input', () => {
+            if (input.value) {
+                btns.forEach(b => b.classList.remove('active'));
+            } else {
+                btns[0].classList.add('active');
+            }
+        });
+    });
+
+    cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('active');
+    });
+
+    confirmBtn.addEventListener('click', () => {
+        const getVal = (type, defaultVal) => {
+            const input = document.getElementById(`custom-${type}`);
+            if (input.value) return parseInt(input.value);
+            const activeBtn = document.querySelector(`#${type}-options .opt-btn.active`);
+            return activeBtn ? parseInt(activeBtn.dataset.val) : defaultVal;
+        };
+
+        const workMins = getVal('work', 25);
+        const breakMins = getVal('break', 5);
+        const sessions = getVal('session', 1);
+
+        modal.classList.remove('active');
+
+        if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+
+        const laptop = gameState.lastActiveLaptop;
+        if (!laptop || laptop.claimedBy) return;
+
+        gameState.pomodoro.active = true;
+        gameState.pomodoro.laptopId = laptop.id;
+        gameState.pomodoro.workDuration = workMins;
+        gameState.pomodoro.breakDuration = breakMins;
+        gameState.pomodoro.sessionsLeft = sessions;
+        gameState.pomodoro.totalSessions = sessions;
+        gameState.pomodoro.phase = 'wait';
+        
+        const updates = {};
+        updates[`pomodoro/${laptop.id}`] = {
+            claimedBy: gameState.userId,
+            phase: 'wait',
+            endTime: 0,
+            workDuration: workMins,
+            breakDuration: breakMins,
+            sessionsLeft: sessions,
+            totalSessions: sessions
+        };
+        update(ref(database), updates);
+        
+        startKidnapAnimation(laptop);
+    });
+}
+
+function startPomodoroPhase(phase) {
+    gameState.pomodoro.phase = phase;
+    gameState.pomodoro.transitioning = false;
+    const duration = phase === 'work' ? gameState.pomodoro.workDuration : gameState.pomodoro.breakDuration;
+    gameState.pomodoro.endTime = Date.now() + duration * 60000;
+    
+    if (gameState.pomodoro.laptopId !== null) {
+        const updates = {};
+        const pomoData = {
+            claimedBy: gameState.userId,
+            phase: phase,
+            endTime: gameState.pomodoro.endTime,
+            workDuration: gameState.pomodoro.workDuration,
+            breakDuration: gameState.pomodoro.breakDuration,
+            sessionsLeft: gameState.pomodoro.sessionsLeft,
+            totalSessions: gameState.pomodoro.totalSessions
+        };
+        updates[`pomodoro/${gameState.pomodoro.laptopId}`] = pomoData;
+        update(ref(database), updates);
+    }
+
+    if (phase === 'work') {
+        const panel = document.getElementById('focus-sounds-panel');
+        if (panel) panel.classList.add('active');
+        
+        if (gameState.focusAudioEngine) {
+            gameState.focusAudioEngine.fadeToMaster(0.5, 2.0);
+            for (const [name, config] of Object.entries(gameState.focusAudioEngine.sounds)) {
+                if (config.active) {
+                    gameState.focusAudioEngine.startSound(name);
+                }
+            }
+        }
+    }
+    const player = gameState.players[gameState.userId];
+    if (player) {
+        updatePlayerPosition(player.x, player.y);
+    }
+}
+
+function listenToPomodoro() {
+    const pomodoroRef = ref(database, 'pomodoro');
+    onValue(pomodoroRef, (snapshot) => {
+        const data = snapshot.val() || {};
+        gameState.laptops.forEach(laptop => {
+            const state = data[laptop.id];
+            if (state) {
+                laptop.claimedBy = state.claimedBy;
+                laptop.endTime = state.endTime;
+                laptop.phase = state.phase;
+                laptop.workDuration = state.workDuration;
+                laptop.breakDuration = state.breakDuration;
+                laptop.sessionsLeft = state.sessionsLeft;
+                laptop.totalSessions = state.totalSessions;
+
+
+            } else {
+                laptop.claimedBy = null;
+                laptop.endTime = 0;
+                laptop.phase = 'none';
+            }
+        });
+    });
 }
 
 function setupLogout() {
-    document.getElementById('logout-btn').addEventListener('click', () => window.location.reload());
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        if (gameState.userId) {
+            set(ref(database, `users/${gameState.userId}/activeInGame`), false).then(() => {
+                window.location.reload();
+            }).catch(() => {
+                window.location.reload();
+            });
+        } else {
+            window.location.reload();
+        }
+    });
 }
 
 function initializePlayerPosition() {
@@ -309,7 +997,15 @@ function listenToPlayers() {
                         player.username = userData.username;
                         player.channelName = userData.channelName;
                         player.avatar = userData.avatar;
-                        if (!isCurrentUser) { player.x = userData.x || 0; player.y = userData.y || 0; }
+                        if (!isCurrentUser) { 
+                            const player = gameState.players[userId];
+                            player.x = userData.x || 0; 
+                            player.y = userData.y || 0; 
+                            player.isMoving = userData.isMoving || false;
+                            player.isSprinting = userData.isSprinting || false;
+                            player.isLockedIn = userData.isLockedIn || false;
+                            player.isWorking = userData.isWorking || false;
+                        }
                     }
                     if (userData.avatar && !gameState.avatarCache[userId]) {
                         const img = new Image();
@@ -332,9 +1028,16 @@ function listenToPlayers() {
 
 function updatePlayerPosition(x, y) {
     if (!gameState.userId) return;
+    const player = gameState.players[gameState.userId];
     const updates = {};
     updates[`users/${gameState.userId}/x`] = x;
     updates[`users/${gameState.userId}/y`] = y;
+    if (player) {
+        updates[`users/${gameState.userId}/isMoving`] = player.isMoving || false;
+        updates[`users/${gameState.userId}/isSprinting`] = player.isSprinting || false;
+        updates[`users/${gameState.userId}/isLockedIn`] = gameState.isLockedIn || false;
+        updates[`users/${gameState.userId}/isWorking`] = (gameState.isLockedIn && gameState.pomodoro.active && gameState.pomodoro.phase === 'work') || false;
+    }
     update(ref(database), updates);
 }
 
@@ -360,23 +1063,45 @@ function handleMovement() {
     const player = gameState.players[gameState.userId];
     if (!player) return;
     let dx = 0, dy = 0;
-    const currentSpeed = MOVE_SPEED * gameState.dtFactor;
+    const isSprinting = gameState.keys['ShiftLeft'] || gameState.keys['ShiftRight'];
+    const currentSpeed = (isSprinting ? MOVE_SPEED * 1.8 : MOVE_SPEED) * gameState.dtFactor;
     if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) dy -= currentSpeed;
     if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) dy += currentSpeed;
     if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) dx -= currentSpeed;
     if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) dx += currentSpeed;
     if (dx !== 0 || dy !== 0) {
+        player.isMoving = true;
+        player.isSprinting = isSprinting;
         const nextX = player.x + dx;
         const nextY = player.y + dy;
         if (!checkCollision(nextX, player.y)) player.x = nextX;
         if (!checkCollision(player.x, nextY)) player.y = nextY;
         updatePlayerPosition(player.x, player.y);
+        
+        if (Math.random() < (isSprinting ? 0.8 : 0.4) * gameState.dtFactor) {
+            spawnDust(player.x, player.y, isSprinting ? 2 : 1, false);
+        }
+    } else {
+        if (player.isMoving) {
+            player.isMoving = false;
+            player.isSprinting = false;
+            updatePlayerPosition(player.x, player.y);
+        }
     }
 }
 
 function updateWindParticles() {
+    // Lerp wind speed and focus fog opacity
+    const isFocused = gameState.isLockedIn && gameState.pomodoro.active && gameState.pomodoro.phase === 'work';
+    const targetWindSpeed = isFocused ? 0.15 : 1.0;
+    const targetFogAlpha = isFocused ? 1.0 : 0.0;
+    
+    const lerpFactor = 1 - Math.pow(1 - 0.03, gameState.dtFactor);
+    gameState.windSpeedMultiplier += (targetWindSpeed - gameState.windSpeedMultiplier) * lerpFactor;
+    gameState.focusFogAlpha += (targetFogAlpha - gameState.focusFogAlpha) * lerpFactor;
+
     gameState.windParticles.forEach(p => {
-        p.x -= p.speed * gameState.dtFactor;
+        p.x -= p.speed * gameState.dtFactor * gameState.windSpeedMultiplier;
         if (p.x < -100) {
             p.x = window.innerWidth + 100;
             p.y = Math.random() * window.innerHeight;
@@ -402,7 +1127,12 @@ function updateInteractions() {
     });
 
     const baseAlpha = gameState.isLockedIn ? 0.95 : 0.8;
-    const targetAlpha = (gameState.activeLaptop || gameState.isLockedIn) ? Math.min(baseAlpha, (1 - minDist / 120) * 1.5 || baseAlpha) : 0;
+    let targetAlpha = (gameState.activeLaptop || gameState.isLockedIn) ? Math.min(baseAlpha, (1 - minDist / 120) * 1.5 || baseAlpha) : 0;
+    
+    // Disable the dark laptop focus mask if we are currently on a break!
+    if (gameState.pomodoro.active && gameState.pomodoro.phase === 'break') {
+        targetAlpha = 0;
+    }
     
     const animAlphaMult = (gameState.anim.active && gameState.anim.phase !== 'none') ? 0 : 1;
     const lerpFactor = 1 - Math.pow(1 - 0.1, gameState.dtFactor);
@@ -415,6 +1145,9 @@ function updateAnimation() {
     const player = gameState.players[gameState.userId];
     const laptop = gameState.anim.laptop;
     if (!player || !laptop) return;
+
+    // Heavy dust during the entire kidnap animation sequence
+    spawnDust(player.x, player.y, Math.ceil(3 * gameState.dtFactor), true);
 
     if (gameState.anim.phase === 'reach') {
         gameState.anim.progress += 0.08 * gameState.dtFactor;
@@ -445,8 +1178,105 @@ function updateAnimation() {
             gameState.anim.active = false;
             gameState.anim.phase = 'none';
             gameState.isLockedIn = true;
-            updatePlayerPosition(player.x, player.y);
+            
+            if (gameState.pomodoro.active && gameState.pomodoro.phase === 'wait') {
+                startPomodoroPhase('work');
+            }
         }
+    }
+    
+    // Sync position continuously during animation to prevent snapping for other clients
+    updatePlayerPosition(player.x, player.y);
+}
+
+function spawnDust(x, y, amount, isDragging = false) {
+    for (let i = 0; i < amount; i++) {
+        gameState.dustParticles.push({
+            x: x + (Math.random() - 0.5) * 30,
+            y: y + PLAYER_SIZE / 2 + (Math.random() - 0.5) * 10,
+            vx: (Math.random() - 0.5) * (isDragging ? 4 : 1),
+            vy: (Math.random() - 0.5) * (isDragging ? 4 : 1) - (isDragging ? 1 : 0.5),
+            life: 1.0,
+            decay: 0.03 + Math.random() * 0.04,
+            size: 2 + Math.random() * (isDragging ? 5 : 3)
+        });
+    }
+}
+
+function updateDustParticles() {
+    for (let i = gameState.dustParticles.length - 1; i >= 0; i--) {
+        const p = gameState.dustParticles[i];
+        p.x += p.vx * gameState.dtFactor;
+        p.y += p.vy * gameState.dtFactor;
+        p.life -= p.decay * gameState.dtFactor;
+        if (p.life <= 0) {
+            gameState.dustParticles.splice(i, 1);
+        }
+    }
+}
+
+function updatePlayerBobbing() {
+    for (const player of Object.values(gameState.players)) {
+        if (player.bobTime === undefined) player.bobTime = 0;
+        if (player.bobOffset === undefined) player.bobOffset = 0;
+        
+        const isLocal = player.userId === gameState.userId;
+        const lastBobTime = player.bobTime;
+        const lockedIn = isLocal ? gameState.isLockedIn : player.isLockedIn;
+        
+        if (!isLocal && player.isMoving) {
+            if (Math.random() < 0.2 * gameState.dtFactor) spawnDust(player.x, player.y, 1, false);
+        }
+
+        if (player.isMoving && !lockedIn && (!gameState.anim.active || gameState.anim.phase !== 'pull')) {
+            const speed = player.isSprinting ? 0.3 : 0.15;
+            player.bobTime += speed * gameState.dtFactor;
+            const targetBounce = Math.abs(Math.sin(player.bobTime)) * (player.isSprinting ? 12 : 6);
+            player.bobOffset += (targetBounce - player.bobOffset) * 0.5 * gameState.dtFactor;
+            
+            if (isLocal) {
+                if (Math.floor(player.bobTime / Math.PI) > Math.floor(lastBobTime / Math.PI)) {
+                    if (gameState.sounds.walk) {
+                        const walkSound = gameState.sounds.walk.cloneNode();
+                        walkSound.volume = player.isSprinting ? 0.6 : 0.3;
+                        walkSound.play().catch(e => {});
+                    }
+                }
+            }
+        } else {
+            player.bobTime = 0;
+            player.bobOffset += (0 - player.bobOffset) * 0.2 * gameState.dtFactor;
+        }
+    }
+}
+
+function updateNametags() {
+    const localPlayer = gameState.players[gameState.userId];
+    if (!localPlayer) return;
+
+    for (const player of Object.values(gameState.players)) {
+        if (player.nameAlpha === undefined) player.nameAlpha = 0;
+        
+        const isLocal = player.userId === gameState.userId;
+        const lockedIn = isLocal ? gameState.isLockedIn : player.isLockedIn;
+        let targetAlpha = 0;
+
+        if (isLocal) {
+            targetAlpha = lockedIn ? 0 : 1;
+        } else {
+            const dist = Math.hypot(player.x - localPlayer.x, player.y - localPlayer.y);
+            if (lockedIn) {
+                targetAlpha = 0;
+            } else if (dist < 200) {
+                targetAlpha = 1;
+            } else {
+                targetAlpha = 0;
+            }
+        }
+
+        const fadeSpeed = lockedIn ? 0.3 : (isLocal ? 0.2 : 0.15); 
+        const lerpFactor = 1 - Math.pow(1 - fadeSpeed, gameState.dtFactor);
+        player.nameAlpha += (targetAlpha - player.nameAlpha) * lerpFactor;
     }
 }
 
@@ -462,7 +1292,11 @@ function gameLoop(timestamp) {
     handleMovement();
     updateAnimation();
     updateCamera();
+    updatePlayerBobbing();
+    updateNametags();
+    updatePomodoro();
     updateWindParticles();
+    updateDustParticles();
     updateInteractions();
     render();
     requestAnimationFrame(gameLoop);
@@ -494,6 +1328,8 @@ function render() {
         drawKidnapLine();
     }
 
+    drawDustParticles();
+    drawTimers();
     drawPlayers(false); 
 
     if (gameState.assets.shadow.complete) {
@@ -511,6 +1347,19 @@ function render() {
     }
 
     drawWindParticles();
+    drawFocusFog();
+}
+
+function drawDustParticles() {
+    const ctx = gameState.ctx;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    gameState.dustParticles.forEach(p => {
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1.0;
 }
 
 function drawKidnapLine() {
@@ -605,6 +1454,42 @@ function drawFocusMask(canvas) {
 
 function drawPrompt(laptop) {
     const ctx = gameState.ctx;
+    
+    // If already in a Pomodoro, don't show prompt to start another one
+    if (gameState.pomodoro.active) {
+        if (laptop.claimedBy && laptop.claimedBy !== gameState.userId) {
+            let ownerName = "شخص آخر";
+            const owner = gameState.players[laptop.claimedBy];
+            if (owner) {
+                ownerName = owner.username;
+            }
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.font = 'bold 14px Rubik';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = 'black';
+            ctx.fillText(`هذا الجهاز تابع لـ ${ownerName}`, laptop.x, laptop.y - 45);
+            ctx.shadowBlur = 0;
+        }
+        return;
+    }
+    
+    if (laptop.claimedBy) {
+        let ownerName = "شخص آخر";
+        const owner = gameState.players[laptop.claimedBy];
+        if (owner) {
+            ownerName = owner.username;
+        }
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = 'bold 14px Rubik';
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = 'black';
+        ctx.fillText(`هذا الجهاز تابع لـ ${ownerName}`, laptop.x, laptop.y - 45);
+        ctx.shadowBlur = 0;
+        return;
+    }
+
     ctx.fillStyle = 'white';
     ctx.font = 'bold 16px Rubik';
     ctx.textAlign = 'center';
@@ -612,6 +1497,162 @@ function drawPrompt(laptop) {
     ctx.shadowColor = 'black';
     ctx.fillText('انقر للبدء', laptop.x, laptop.y - 45);
     ctx.shadowBlur = 0;
+}
+
+function updatePomodoro() {
+    if (!gameState.pomodoro.active) return;
+    
+    const now = Date.now();
+    const remaining = Math.max(0, gameState.pomodoro.endTime - now);
+    
+    const largeTimer = document.getElementById('pomodoro-large-timer');
+    const smallTimer = document.getElementById('pomodoro-small-timer');
+    
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+    if (gameState.pomodoro.phase === 'work') {
+        largeTimer.classList.remove('hidden');
+        smallTimer.classList.add('hidden');
+        document.getElementById('large-timer-text').textContent = timeStr;
+        document.getElementById('large-session-text').textContent = `جلسة ${gameState.pomodoro.totalSessions - gameState.pomodoro.sessionsLeft + 1} من ${gameState.pomodoro.totalSessions}`;
+        
+        if (remaining === 0 && !gameState.pomodoro.transitioning) {
+            gameState.pomodoro.transitioning = true;
+            largeTimer.classList.add('hidden');
+            gameState.isLockedIn = false;
+            
+            // FADE OUT FOCUS SOUNDS
+            if (gameState.focusAudioEngine) {
+                gameState.focusAudioEngine.fadeToMaster(0, 1.5);
+            }
+            const panel = document.getElementById('focus-sounds-panel');
+            if (panel) panel.classList.remove('active');
+            
+            if (gameState.focusAudioEngine) {
+                gameState.focusAudioEngine.playEffect('timeBreak');
+            } else {
+                playSoundRobust(gameState.sounds.timeBreak);
+            }
+            if (Notification.permission === "granted") {
+                new Notification("مدونة ستوديو", { body: "انتهت جلسة العمل! وقت الراحة." });
+            }
+            
+            startPomodoroPhase('break');
+        }
+    } else if (gameState.pomodoro.phase === 'break') {
+        largeTimer.classList.add('hidden');
+        smallTimer.classList.remove('hidden');
+        document.getElementById('small-timer-text').textContent = timeStr;
+        
+        if (remaining === 0 && !gameState.pomodoro.transitioning) {
+            gameState.pomodoro.transitioning = true;
+            smallTimer.classList.add('hidden');
+            gameState.pomodoro.sessionsLeft--;
+            
+            if (gameState.pomodoro.sessionsLeft <= 0) {
+                gameState.pomodoro.active = false;
+                const updates = {};
+                updates[`pomodoro/${gameState.pomodoro.laptopId}`] = null;
+                update(ref(database), updates);
+                gameState.pomodoro.laptopId = null;
+                if (Notification.permission === "granted") {
+                    new Notification("مدونة ستوديو", { body: "لقد أتممت جميع جلسات العمل بنجاح!" });
+                }
+                
+                // STOP ALL FOCUS SOUNDS
+                if (gameState.focusAudioEngine) {
+                    gameState.focusAudioEngine.stopAll();
+                }
+                const panel = document.getElementById('focus-sounds-panel');
+                if (panel) panel.classList.remove('active');
+                
+                gameState.pomodoro.transitioning = false;
+            } else {
+                if (gameState.focusAudioEngine) {
+                    gameState.focusAudioEngine.playEffect('timeReturn');
+                } else {
+                    playSoundRobust(gameState.sounds.timeReturn);
+                }
+                if (Notification.permission === "granted") {
+                    new Notification("مدونة ستوديو", { body: "انتهى وقت الراحة. هيا للعمل!" });
+                }
+                
+                // Set state briefly to wait so that kidnap starts next work cycle timer
+                gameState.pomodoro.phase = 'wait';
+                
+                const updates = {};
+                updates[`pomodoro/${gameState.pomodoro.laptopId}/phase`] = 'wait';
+                updates[`pomodoro/${gameState.pomodoro.laptopId}/endTime`] = 0;
+                update(ref(database), updates);
+                
+                setTimeout(() => {
+                    const laptop = gameState.laptops.find(l => l.id === gameState.pomodoro.laptopId);
+                    if (laptop) {
+                        startKidnapAnimation(laptop);
+                    }
+                }, 2000);
+            }
+        }
+    }
+}
+
+function drawTimers() {
+    const ctx = gameState.ctx;
+    const now = Date.now();
+    
+    gameState.laptops.forEach(laptop => {
+        if (!laptop.claimedBy || laptop.claimedBy === gameState.userId) return; // Only draw for others
+        if (laptop.phase !== 'work' && laptop.phase !== 'break') return; // Don't draw if not in valid phase
+        
+        const remaining = Math.max(0, laptop.endTime - now);
+        
+        // Hide if stuck on 00:00 for more than a few seconds (e.g., owner logged out or lagged)
+        if (remaining === 0 && now - laptop.endTime > 5000) return;
+        
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        
+        // Use a rounded rectangle instead of a blocky one for the background
+        const textWidth = ctx.measureText(timeStr).width;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        
+        ctx.fillStyle = laptop.phase === 'work' ? COLORS.blue : '#3bb9ab';
+        
+        const bx = laptop.x - textWidth/2 - 12;
+        const by = laptop.y - 70;
+        const bw = textWidth + 24;
+        const bh = 26;
+        const br = 13;
+        
+        ctx.beginPath();
+        ctx.moveTo(bx + br, by);
+        ctx.lineTo(bx + bw - br, by);
+        ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + br);
+        ctx.lineTo(bx + bw, by + bh - br);
+        ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - br, by + bh);
+        ctx.lineTo(bx + br, by + bh);
+        ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - br);
+        ctx.lineTo(bx, by + br);
+        ctx.quadraticCurveTo(bx, by, bx + br, by);
+        ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 14px Rubik';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(timeStr, laptop.x, laptop.y - 57);
+        ctx.textBaseline = 'alphabetic';
+        
+        // Draw tiny icon above
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = '12px Rubik';
+        ctx.fillText(laptop.phase === 'work' ? '💻' : '☕', laptop.x, laptop.y - 80);
+    });
 }
 
 function drawLockedInOverlay() {
@@ -622,10 +1663,6 @@ function drawLockedInOverlay() {
     ctx.beginPath();
     ctx.arc(player.x, player.y, PLAYER_SIZE / 2 + 10, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'white';
-    ctx.font = '500 12px Rubik';
-    ctx.textAlign = 'center';
-    ctx.fillText('ESC للخروج', player.x, player.y + PLAYER_SIZE / 2 + 45);
 }
 
 function drawWindParticles() {
@@ -644,6 +1681,54 @@ function drawWindParticles() {
             ctx.fillRect(drawX + (i * p.size), drawY, p.size, p.size);
         }
     });
+    ctx.restore();
+}
+
+function drawFocusFog() {
+    if (gameState.focusFogAlpha <= 0.01) return;
+    const ctx = gameState.ctx;
+    const canvas = gameState.canvas;
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    ctx.save();
+    ctx.globalAlpha = gameState.focusFogAlpha * 0.85;
+    
+    const t = Date.now() * 0.0004; // slower, extremely calming movement
+    
+    // Gradient 1: Smooth Slate/Indigo edge shadow vignette
+    const grad1 = ctx.createRadialGradient(
+        w / 2 + Math.sin(t) * (w * 0.15), h / 2 + Math.cos(t * 0.7) * (h * 0.15), Math.min(w, h) * 0.3,
+        w / 2, h / 2, Math.max(w, h) * 0.95
+    );
+    grad1.addColorStop(0, 'rgba(10, 15, 30, 0)');
+    grad1.addColorStop(0.6, 'rgba(10, 15, 30, 0.2)');
+    grad1.addColorStop(1, 'rgba(13, 27, 42, 0.6)'); // deep blue accent
+    ctx.fillStyle = grad1;
+    ctx.fillRect(0, 0, w, h);
+    
+    // Gradient 2: Organic drifting emerald/teal focus highlight (creates a warm, premium organic feel)
+    const grad2 = ctx.createRadialGradient(
+        w * 0.3 + Math.cos(t * 0.8) * (w * 0.1), h * 0.4 + Math.sin(t * 1.1) * (h * 0.1), Math.min(w, h) * 0.25,
+        w * 0.3, h * 0.4, Math.max(w, h) * 0.75
+    );
+    grad2.addColorStop(0, 'rgba(16, 185, 129, 0)');
+    grad2.addColorStop(0.5, 'rgba(16, 185, 129, 0.04)');
+    grad2.addColorStop(1, 'rgba(16, 185, 129, 0.12)');
+    ctx.fillStyle = grad2;
+    ctx.fillRect(0, 0, w, h);
+
+    // Gradient 3: Soft drifting violet/indigo cloud at bottom right
+    const grad3 = ctx.createRadialGradient(
+        w * 0.8 + Math.sin(t * 1.3) * (w * 0.08), h * 0.8 + Math.cos(t * 0.9) * (h * 0.08), Math.min(w, h) * 0.25,
+        w * 0.8, h * 0.8, Math.max(w, h) * 0.7
+    );
+    grad3.addColorStop(0, 'rgba(99, 102, 241, 0)');
+    grad3.addColorStop(0.5, 'rgba(99, 102, 241, 0.03)');
+    grad3.addColorStop(1, 'rgba(99, 102, 241, 0.15)');
+    ctx.fillStyle = grad3;
+    ctx.fillRect(0, 0, w, h);
+    
     ctx.restore();
 }
 
@@ -678,24 +1763,50 @@ function drawPlayers(onlyLocal = false) {
     for (const player of Object.values(gameState.players)) {
         const isCurrentUser = player.userId === gameState.userId;
         if (onlyLocal && !isCurrentUser) continue;
+        
         const screenX = player.x;
-        const screenY = player.y;
+        const screenY = player.y - (player.bobOffset || 0);
+        
+        const isWorking = isCurrentUser ? 
+            (gameState.isLockedIn && gameState.pomodoro.active && gameState.pomodoro.phase === 'work') : 
+            player.isWorking;
+            
+        let workBob = 0;
+        let workAngle = 0;
+        let workScaleX = 1.0;
+        let workScaleY = 1.0;
+        
+        if (isWorking) {
+            const workT = Date.now() * 0.005;
+            workBob = Math.sin(workT) * 3;
+            workAngle = Math.sin(workT * 0.5) * 0.08;
+            workScaleY = 1.0 + Math.sin(workT) * 0.04;
+            workScaleX = 1.0 - Math.sin(workT) * 0.04;
+        }
+        
+        ctx.save();
+        ctx.translate(screenX, screenY + workBob);
+        ctx.rotate(workAngle);
+        ctx.scale(workScaleX, workScaleY);
+        
         ctx.shadowBlur = 10;
         ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-        ctx.shadowOffsetY = 4;
+        ctx.shadowOffsetY = 4 + (player.bobOffset || 0);
         ctx.beginPath();
-        ctx.arc(screenX, screenY, (PLAYER_SIZE / 2) + 4, 0, Math.PI * 2);
+        ctx.arc(0, 0, (PLAYER_SIZE / 2) + 4, 0, Math.PI * 2);
         ctx.fillStyle = isCurrentUser ? COLORS.blue : '#ffffff';
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.shadowOffsetY = 0;
+        
         ctx.save();
         ctx.beginPath();
-        ctx.arc(screenX, screenY, PLAYER_SIZE / 2, 0, Math.PI * 2);
+        ctx.arc(0, 0, PLAYER_SIZE / 2, 0, Math.PI * 2);
         ctx.clip();
+        
         const img = gameState.avatarCache[player.userId];
         if (img && img !== 'failed') {
-            ctx.drawImage(img, screenX - PLAYER_SIZE / 2, screenY - PLAYER_SIZE / 2, PLAYER_SIZE, PLAYER_SIZE);
+            ctx.drawImage(img, -PLAYER_SIZE / 2, -PLAYER_SIZE / 2, PLAYER_SIZE, PLAYER_SIZE);
         } else {
             ctx.fillStyle = isCurrentUser ? COLORS.blue : '#ccc';
             ctx.fill();
@@ -703,19 +1814,25 @@ function drawPlayers(onlyLocal = false) {
             ctx.font = 'bold 24px Rubik';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(player.username.charAt(0).toUpperCase(), screenX, screenY);
+            ctx.fillText(player.username.charAt(0).toUpperCase(), 0, 0);
         }
         ctx.restore();
-        ctx.fillStyle = 'white';
-        ctx.font = '500 14px Rubik';
-        ctx.textAlign = 'center';
-        ctx.fillText(player.username, screenX, screenY + PLAYER_SIZE / 2 + 25);
-        if (isCurrentUser) {
-            ctx.fillStyle = COLORS.blue;
-            ctx.font = '700 10px Rubik';
-            ctx.fillText('أنت', screenX, screenY - PLAYER_SIZE / 2 - 15);
+        ctx.restore(); // restores translate, rotate, scale
+        
+        if (player.nameAlpha > 0.01) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${player.nameAlpha})`;
+            ctx.font = '500 14px Rubik';
+            ctx.textAlign = 'center';
+            ctx.fillText(player.username, screenX, player.y + PLAYER_SIZE / 2 + 25);
         }
     }
 }
 
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+// Background timer to ensure pomodoro logic runs when the browser throttles gameLoop
+setInterval(() => {
+    if (document.hidden) {
+        updatePomodoro();
+    }
+}, 1000);

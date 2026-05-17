@@ -68,8 +68,113 @@
 
         <canvas id="game-canvas"></canvas>
 
-        <div class="controls-hint">
-            <p>استخدم WASD أو الأسهم للتحرك • اسحب بالماوس لتحريك الكاميرا</p>
+
+
+        <!-- مؤشر بومودورو الكبير (وقت العمل) -->
+        <div id="pomodoro-large-timer" class="pomodoro-large hidden">
+            <div class="timer-text" id="large-timer-text">25:00</div>
+            <div class="session-text" id="large-session-text">جلسة 1 من 3</div>
+        </div>
+
+        <!-- مؤشر بومودورو الصغير (وقت الراحة) -->
+        <div id="pomodoro-small-timer" class="pomodoro-small hidden">
+            <span>استراحة:</span>
+            <span id="small-timer-text">05:00</span>
+        </div>
+    </div>
+
+    <!-- نافذة بومودورو -->
+    <div id="pomodoro-modal" class="modal-overlay">
+        <div class="modal-content pomodoro-content">
+            <div class="logo-container">
+                <img src="logo.png" alt="مدونة ستوديو Logo">
+            </div>
+            <h2 class="title" style="font-size: 32px; font-weight: 800; margin-bottom: 20px;">مستعد؟</h2>
+            
+            <div class="pomodoro-settings">
+                <div class="setting-group">
+                    <label>عدد دقائق العمل</label>
+                    <div class="options" id="work-options">
+                        <button class="opt-btn" data-val="15">15</button>
+                        <button class="opt-btn active" data-val="25">25</button>
+                        <button class="opt-btn" data-val="50">50</button>
+                        <input type="number" class="custom-input" id="custom-work" placeholder="مخصص" min="1">
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <label>دقائق الراحة</label>
+                    <div class="options" id="break-options">
+                        <button class="opt-btn active" data-val="5">5</button>
+                        <button class="opt-btn" data-val="10">10</button>
+                        <button class="opt-btn" data-val="15">15</button>
+                        <input type="number" class="custom-input" id="custom-break" placeholder="مخصص" min="1">
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <label>عدد الجلسات</label>
+                    <div class="options" id="session-options">
+                        <button class="opt-btn active" data-val="1">1</button>
+                        <button class="opt-btn" data-val="2">2</button>
+                        <button class="opt-btn" data-val="3">3</button>
+                        <input type="number" class="custom-input" id="custom-session" placeholder="مخصص" min="1">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-actions" style="margin-top: 30px;">
+                <button id="pomodoro-confirm" class="btn-primary" style="width: 100%; font-size: 20px; padding: 15px;">أنا لها</button>
+            </div>
+            <button id="pomodoro-cancel" class="btn-cancel" style="margin-top: 15px; background: none; border: none; color: #888; cursor: pointer; text-decoration: underline;">تراجع</button>
+        </div>
+    </div>
+
+    <!-- لوحة أصوات التركيز -->
+    <div id="focus-sounds-panel" class="focus-sounds-panel">
+        <div class="panel-header-row">
+            <div class="panel-header">أصوات التركيز 🎧</div>
+            <div class="overall-vol-container">
+                <span class="overall-vol-label">الصوت العام</span>
+                <input type="range" id="overall-vol" class="overall-vol-slider" min="0" max="1" step="0.05" value="0.5">
+            </div>
+        </div>
+        <div class="sound-controls">
+            <!-- Plane -->
+            <div class="sound-item" data-sound="plane">
+                <button class="sound-toggle-btn" title="طائرة">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3.5c-.5-.5-2.5 0-4 1.5L13.5 8.5l-8.2-1.8c-.9-.2-1.8.1-2.4.7l-.5.5c-.4.4-.3 1 .1 1.3l6.3 3.8-3.8 3.8-2.3-.5c-.6-.1-1.2.1-1.5.6l-.3.3c-.3.3-.2.8.2.9L5 20l.9 3.9c.1.4.6.5.9.2l.3-.3c.5-.3.7-.9.6-1.5l-.5-2.3 3.8-3.8 3.8 6.3c.3.4.9.5 1.3.1l.5-.5c.6-.6.9-1.5.7-2.4z"/></svg>
+                </button>
+                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <!-- Rain Muffled -->
+            <div class="sound-item" data-sound="rain_muffled">
+                <button class="sound-toggle-btn" title="مطر خافت">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><line x1="12" y1="16" x2="12" y2="22"/><path d="M8 18c0-2 2-3 4-3s4 1 4 3"/></svg>
+                </button>
+                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <!-- White Noise Muffled -->
+            <div class="sound-item" data-sound="white_muffled">
+                <button class="sound-toggle-btn" title="ضوضاء بيضاء خافتة">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M2 16h20M2 8h20"/></svg>
+                </button>
+                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <!-- Brown Noise Muffled -->
+            <div class="sound-item" data-sound="brown_muffled">
+                <button class="sound-toggle-btn" title="ضوضاء بنية خافتة">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M6 14h12M9 18h6M1 6h22"/></svg>
+                </button>
+                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <!-- Wind -->
+            <div class="sound-item" data-sound="wind">
+                <button class="sound-toggle-btn" title="رياح">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>
+                </button>
+                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+            </div>
         </div>
     </div>
 

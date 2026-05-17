@@ -1,6 +1,6 @@
 // Firebase configuration
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getDatabase, ref, onValue, update, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getDatabase, ref, onValue, update, get, onDisconnect, set } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBUxJmhqzUuhRWS5jL-87IRzhBvzDc5OHQ",
@@ -17,4 +17,4 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
-export { database, ref, onValue, update, get };
+export { database, ref, onValue, update, get, onDisconnect, set };
