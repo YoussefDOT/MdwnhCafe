@@ -27,6 +27,8 @@ const gameState = {
     lastActiveLaptop: null,
     isLockedIn: false,
     focusAlpha: 0,
+    lastTime: 0,
+    dtFactor: 1.0,
     
     // Animation State
     anim: {
@@ -348,8 +350,9 @@ function updateCamera() {
     if (!player) return;
     const targetX = -player.x;
     const targetY = -player.y;
-    gameState.camera.x += (targetX - gameState.camera.x) * CAMERA_SMOOTHING;
-    gameState.camera.y += (targetY - gameState.camera.y) * CAMERA_SMOOTHING;
+    const lerpFactor = 1 - Math.pow(1 - CAMERA_SMOOTHING, gameState.dtFactor);
+    gameState.camera.x += (targetX - gameState.camera.x) * lerpFactor;
+    gameState.camera.y += (targetY - gameState.camera.y) * lerpFactor;
 }
 
 function handleMovement() {
@@ -357,10 +360,11 @@ function handleMovement() {
     const player = gameState.players[gameState.userId];
     if (!player) return;
     let dx = 0, dy = 0;
-    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) dy -= MOVE_SPEED;
-    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) dy += MOVE_SPEED;
-    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) dx -= MOVE_SPEED;
-    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) dx += MOVE_SPEED;
+    const currentSpeed = MOVE_SPEED * gameState.dtFactor;
+    if (gameState.keys['KeyW'] || gameState.keys['ArrowUp']) dy -= currentSpeed;
+    if (gameState.keys['KeyS'] || gameState.keys['ArrowDown']) dy += currentSpeed;
+    if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft']) dx -= currentSpeed;
+    if (gameState.keys['KeyD'] || gameState.keys['ArrowRight']) dx += currentSpeed;
     if (dx !== 0 || dy !== 0) {
         const nextX = player.x + dx;
         const nextY = player.y + dy;
@@ -372,7 +376,7 @@ function handleMovement() {
 
 function updateWindParticles() {
     gameState.windParticles.forEach(p => {
-        p.x -= p.speed;
+        p.x -= p.speed * gameState.dtFactor;
         if (p.x < -100) {
             p.x = window.innerWidth + 100;
             p.y = Math.random() * window.innerHeight;
@@ -401,7 +405,8 @@ function updateInteractions() {
     const targetAlpha = (gameState.activeLaptop || gameState.isLockedIn) ? Math.min(baseAlpha, (1 - minDist / 120) * 1.5 || baseAlpha) : 0;
     
     const animAlphaMult = (gameState.anim.active && gameState.anim.phase !== 'none') ? 0 : 1;
-    gameState.focusAlpha += (targetAlpha * animAlphaMult - gameState.focusAlpha) * 0.1;
+    const lerpFactor = 1 - Math.pow(1 - 0.1, gameState.dtFactor);
+    gameState.focusAlpha += (targetAlpha * animAlphaMult - gameState.focusAlpha) * lerpFactor;
 }
 
 function updateAnimation() {
@@ -412,15 +417,15 @@ function updateAnimation() {
     if (!player || !laptop) return;
 
     if (gameState.anim.phase === 'reach') {
-        gameState.anim.progress += 0.08;
+        gameState.anim.progress += 0.08 * gameState.dtFactor;
         if (gameState.anim.progress >= 1) {
             gameState.anim.phase = 'align'; 
             gameState.anim.progress = 0;
             gameState.anim.startPos = { x: player.x, y: player.y };
         }
     } else if (gameState.anim.phase === 'align') {
-        gameState.anim.progress += 0.025; 
-        const t = easeOutBack(gameState.anim.progress); 
+        gameState.anim.progress += 0.025 * gameState.dtFactor; 
+        const t = easeOutBack(Math.min(1, gameState.anim.progress)); 
         
         player.x = gameState.anim.startPos.x + (laptop.sitX - gameState.anim.startPos.x) * t;
         player.y = gameState.anim.startPos.y + (laptop.intermediateY - gameState.anim.startPos.y) * t;
@@ -431,8 +436,8 @@ function updateAnimation() {
             gameState.anim.startPos = { x: player.x, y: player.y };
         }
     } else if (gameState.anim.phase === 'pull') {
-        gameState.anim.progress += 0.045; 
-        const t = easeOutBack(Math.pow(gameState.anim.progress, 2.5)); 
+        gameState.anim.progress += 0.045 * gameState.dtFactor; 
+        const t = easeOutBack(Math.pow(Math.min(1, gameState.anim.progress), 2.5)); 
         
         player.y = gameState.anim.startPos.y + (laptop.sitY - gameState.anim.startPos.y) * t;
 
@@ -445,7 +450,15 @@ function updateAnimation() {
     }
 }
 
-function gameLoop() {
+function gameLoop(timestamp) {
+    if (!timestamp) timestamp = performance.now();
+    if (!gameState.lastTime) gameState.lastTime = timestamp;
+    let deltaTime = timestamp - gameState.lastTime;
+    gameState.lastTime = timestamp;
+
+    if (deltaTime > 100) deltaTime = 100; // Cap to avoid large jumps if tab is inactive
+    gameState.dtFactor = deltaTime / 16.666; // Standardize to 60fps (1000ms / 60 = 16.666ms)
+
     handleMovement();
     updateAnimation();
     updateCamera();
