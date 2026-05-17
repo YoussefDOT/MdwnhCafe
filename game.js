@@ -34,9 +34,20 @@ class FocusAudioEngine {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
         this.sampleRate = this.ctx.sampleRate;
         this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.setValueAtTime(0.5 * this.overallVolume, this.ctx.currentTime);
+        this.masterGain.gain.setValueAtTime(1.0 * this.overallVolume, this.ctx.currentTime);
         this.masterGain.connect(this.ctx.destination);
         this.loadSoundEffects();
+        
+        const resumeCtx = () => {
+            if (this.ctx && this.ctx.state === 'suspended') {
+                this.ctx.resume().then(() => {
+                    document.removeEventListener('click', resumeCtx);
+                    document.removeEventListener('keydown', resumeCtx);
+                }).catch(e => {});
+            }
+        };
+        document.addEventListener('click', resumeCtx);
+        document.addEventListener('keydown', resumeCtx);
     }
 
     async loadSoundEffects() {
@@ -118,14 +129,13 @@ class FocusAudioEngine {
     startSound(name) {
         if (!this.ctx) this.init();
         if (this.ctx.state === 'suspended') {
-            this.ctx.resume();
+            this.ctx.resume().catch(e=>{});
         }
 
         const sound = this.sounds[name];
         if (sound.nodes) return; 
 
         const gainNode = this.ctx.createGain();
-        gainNode.gain.setValueAtTime(0, this.ctx.currentTime); 
         gainNode.connect(this.masterGain);
 
         let source = null;
@@ -230,7 +240,13 @@ class FocusAudioEngine {
 
         sound.nodes = { source, gainNode, secondaryNodes };
         const scaledVol = sound.volume * this.baseVolumeScale[name];
-        gainNode.gain.linearRampToValueAtTime(scaledVol, this.ctx.currentTime + 1.5);
+        try {
+            gainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+            gainNode.gain.setValueAtTime(0, this.ctx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(scaledVol, this.ctx.currentTime + 1.5);
+        } catch (e) {
+            gainNode.gain.value = scaledVol;
+        }
     }
 
     stopSound(name) {
@@ -240,8 +256,13 @@ class FocusAudioEngine {
         const gainNode = sound.nodes.gainNode;
         const nodesToStop = [sound.nodes.source, ...sound.nodes.secondaryNodes];
 
-        gainNode.gain.setValueAtTime(gainNode.gain.value, this.ctx.currentTime);
-        gainNode.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+        try {
+            gainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+            gainNode.gain.setValueAtTime(gainNode.gain.value, this.ctx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+        } catch (e) {
+            gainNode.gain.value = 0;
+        }
 
         setTimeout(() => {
             nodesToStop.forEach(n => {
@@ -289,9 +310,17 @@ class FocusAudioEngine {
 
     fadeToMaster(targetVolume, duration) {
         if (!this.ctx) this.init();
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(e=>{});
+        }
         const targetGain = targetVolume * this.overallVolume;
-        this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, this.ctx.currentTime);
-        this.masterGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + duration);
+        try {
+            this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
+            this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, this.ctx.currentTime);
+            this.masterGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + duration);
+        } catch (e) {
+            this.masterGain.gain.value = targetGain;
+        }
     }
 
     applyState(mixState) {
@@ -1024,7 +1053,7 @@ function startPomodoroPhase(phase) {
         if (taskPanel) taskPanel.classList.add('active');
         
         if (gameState.focusAudioEngine) {
-            gameState.focusAudioEngine.fadeToMaster(0.5, 2.0);
+            gameState.focusAudioEngine.fadeToMaster(1.0, 2.0);
             for (const [name, config] of Object.entries(gameState.focusAudioEngine.sounds)) {
                 if (config.active) {
                     gameState.focusAudioEngine.startSound(name);
