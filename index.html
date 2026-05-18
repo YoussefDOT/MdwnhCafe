@@ -7,8 +7,22 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- شاشة اختيار الصالة: الإخوة أو الاخوات -->
+    <div id="lobby-screen" class="screen active">
+        <div class="lobby-container">
+            <div class="logo-container">
+                <img src="logo.png" alt="مدونة ستوديو Logo">
+            </div>
+            <h2 class="title">اختر صالتك</h2>
+            <p class="subtitle">اختر الصالة التي تنتمي إليها للدخول</p>
+            <div id="lobby-buttons" class="lobby-buttons">
+                <!-- Buttons are generated dynamically from LOBBY_CONFIG in game.js -->
+            </div>
+        </div>
+    </div>
+
     <!-- شاشة تسجيل الدخول: قائمة المستخدمين -->
-    <div id="login-screen" class="screen active">
+    <div id="login-screen" class="screen">
         <div class="login-container">
             <div class="logo-container">
                 <img src="logo.png" alt="مدونة ستوديو Logo">
@@ -126,7 +140,7 @@
             <div class="modal-actions" style="margin-top: 30px;">
                 <button id="pomodoro-confirm" class="btn-primary" style="width: 100%; font-size: 20px; padding: 15px;">أنا لها</button>
             </div>
-            <button id="pomodoro-cancel" class="btn-cancel" style="margin-top: 15px; background: none; border: none; color: #888; cursor: pointer; text-decoration: underline;">تراجع</button>
+            <button id="pomodoro-cancel" class="btn-secondary pomodoro-back-btn">رجوع</button>
             <button id="pomodoro-test" class="btn-cancel" style="margin-top: 5px; background: none; border: none; color: #aaa; cursor: pointer; text-decoration: underline;">وضع الاختبار (10ث عمل، 3د راحة، 3 جلسات)</button>
         </div>
     </div>
@@ -166,6 +180,7 @@
                 <div id="success-total-time" style="font-size: 28px; font-weight: 800; color: var(--clr-raisin);">0 دقيقة</div>
                 <div style="font-size: 14px; color: #888; margin-top: 5px;"><span id="success-sessions-count">0</span> جلسات</div>
             </div>
+            <div id="success-task" class="success-task" style="display: none;"></div>
             
             <p style="font-size: 16px; color: #888; margin-bottom: 25px; line-height: 1.5;">قم بالتقاط الشاشة وارسالها في التوثيق</p>
             

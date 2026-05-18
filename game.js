@@ -1,5 +1,32 @@
 import { database, ref, onValue, update, get, onDisconnect, set } from './firebase-config.js';
 
+// ─── Lobby configuration ─────────────────────────────────────────────────────
+// To add a new lobby: add one entry.  The key is the internal lobby ID and must
+// match what index.js writes into users/{id}/lobby.
+// categoryName must match the exact Discord category name.
+const LOBBY_CONFIG = {
+    male: {
+        label:        'الإخوة',
+        categoryName: '🔥 صالة السادة',
+        iconClass:    'male'
+    },
+    female: {
+        label:        'الأخوات',
+        categoryName: '🌺صالة السيدات',
+        iconClass:    'female'
+    }
+    // ← add new lobbies here; no other file changes needed
+};
+
+// Returns a Firebase path scoped to the active lobby.
+// All minigame and pomodoro data is segregated per lobby.
+function lobbyPath(subpath) {
+    const lobby = gameState.selectedLobby;
+    if (!lobby) throw new Error('lobbyPath called before lobby was selected');
+    return `lobbies/${lobby}/${subpath}`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 class FocusAudioEngine {
     constructor() {
         this.ctx = null;
@@ -389,6 +416,7 @@ class FocusAudioEngine {
 const gameState = {
     currentUser: null,
     userId: null,
+    selectedLobby: null,   // 'male' | 'female' | ... – set on lobby screen
     players: {},
     avatarCache: {},
     assets: {
@@ -428,7 +456,10 @@ const gameState = {
         returnPoint: null,
         localResultSent: false,
         finishReturnTimer: null,
-        lastSync: 0
+        lastSync: 0,
+        carVisuals: {},
+        camera: { x: 0, y: 0 },
+        track: null
     },
 
     // Animation State
@@ -450,7 +481,8 @@ const gameState = {
         sessionsLeft: 0,
         workDuration: 25,
         breakDuration: 5,
-        totalSessions: 1
+        totalSessions: 1,
+        createdAt: 0
     }
 };
 
@@ -466,12 +498,15 @@ const COLORS = {
     snow: '#faf9f7',
     raisin: '#262626',
     blue: '#086fb6',
-    red: '#e1352e'
+    red: '#e1352e',
+    afk: '#f4c82b'
 };
 
 const PLAYER_SIZE = 70;
 const MOVE_SPEED = 5;
 const SPAWN_RADIUS = 100;
+const POMODORO_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+const RACE_MAX_AGE_MS = 3 * 60 * 1000;
 
 // Asset Base Dimensions
 const BASE_BG_WIDTH = 2390;
@@ -497,13 +532,21 @@ const DOOR_HALF_HEIGHT = 52;
 const RACE_BUTTON = { x: 0, y: BREAK_ROOM_CENTER_Y + 110, radius: 72 };
 const RACE_JOIN_RADIUS = 230;
 const RACE_LAPS = 3;
-const RACE_TRACK = {
-    outerRx: 590,
-    outerRy: 330,
-    innerRx: 315,
-    innerRy: 155,
-    startAngle: Math.PI / 2
-};
+const RACE_TRACK_SRC = 'Art/RaceTrack Var1.png';
+const RACE_TRACK_SCALE = 1;
+const RACE_TRACK_GRID = 2;
+const RACE_ZONE_OFF = 0;
+const RACE_ZONE_SLOW = 1;
+const RACE_ZONE_FAST = 2;
+const RACE_ZONE_FINISH = 3;
+const RACE_CELL_BARRIER = 4;
+const RACE_SPAWN_OFFSET_PX = 150;
+const RACE_MIN_LAP_MS = 7000;
+const RACE_MIN_LAP_DIST = 600;
+// Race mode tuning
+const RACE_CAR_SCALE = 0.5; // 50% size
+// Make cars 75% of the previous (current) speed: 1.5 * 0.75 = 1.125
+const RACE_SPEED_FACTOR = 1.125; // 112.5% of baseline, 75% of prior 1.5 tuning
 
 // World Boundaries (Updated for new BG size)
 const BOUNDS = {
@@ -524,6 +567,7 @@ const TABLE_BOX = {
 
 // Camera & Wind Settings
 const CAMERA_SMOOTHING = 0.1;
+const POSITION_LERP_SPEED = 0.22;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.0;
 const WIND_PARTICLE_COUNT = 30;
@@ -538,6 +582,494 @@ const easeOutBack = (x) => {
 
 function isBreakActive() {
     return gameState.pomodoro.active && gameState.pomodoro.phase === 'break';
+}
+
+function serverNow() {
+    return Date.now() + (gameState.serverTimeOffset || 0);
+}
+
+function ensureEntityRenderPos(entity) {
+    if (entity.renderX === undefined) {
+        entity.renderX = entity.x;
+        entity.renderY = entity.y;
+    }
+}
+
+function getPositionLerpFactor(dist) {
+    const catchUpSpeed = Math.min(0.5, POSITION_LERP_SPEED + dist * 0.0018);
+    return 1 - Math.pow(1 - catchUpSpeed, gameState.dtFactor);
+}
+
+function lerpEntityRenderTowardTarget(entity) {
+    ensureEntityRenderPos(entity);
+    const dx = entity.x - entity.renderX;
+    const dy = entity.y - entity.renderY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.35) {
+        entity.renderX = entity.x;
+        entity.renderY = entity.y;
+        return false;
+    }
+    const t = getPositionLerpFactor(dist);
+    entity.renderX += dx * t;
+    entity.renderY += dy * t;
+    return true;
+}
+
+function syncEntityRenderToTarget(entity) {
+    ensureEntityRenderPos(entity);
+    entity.renderX = entity.x;
+    entity.renderY = entity.y;
+}
+
+function setEntityTarget(entity, x, y) {
+    entity.x = x;
+    entity.y = y;
+}
+
+function teleportEntity(entity, x, y) {
+    setEntityTarget(entity, x, y);
+    entity.smoothMove = true;
+}
+
+function getPlayerRenderPos(player) {
+    ensureEntityRenderPos(player);
+    return { x: player.renderX, y: player.renderY };
+}
+
+function updatePlayerRenderPositions() {
+    const localPlayer = gameState.players[gameState.userId];
+    for (const player of Object.values(gameState.players)) {
+        const isLocal = player === localPlayer;
+        if (isLocal) {
+            if (player.smoothMove) {
+                if (!lerpEntityRenderTowardTarget(player)) {
+                    player.smoothMove = false;
+                }
+            } else {
+                syncEntityRenderToTarget(player);
+            }
+            continue;
+        }
+        lerpEntityRenderTowardTarget(player);
+    }
+}
+
+function lerpAngle(from, to, t) {
+    let delta = to - from;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    return from + delta * t;
+}
+
+function updateRaceCarVisuals() {
+    const session = gameState.race.session;
+    if (!session) {
+        gameState.race.carVisuals = {};
+        return;
+    }
+
+    const targets = { ...(session.cars || {}) };
+    if (gameState.race.localCar) {
+        targets[gameState.userId] = gameState.race.localCar;
+    }
+
+    const activeIds = new Set(Object.keys(targets));
+    for (const userId of Object.keys(gameState.race.carVisuals)) {
+        if (!activeIds.has(userId)) delete gameState.race.carVisuals[userId];
+    }
+
+    for (const [userId, car] of Object.entries(targets)) {
+        if (!car) continue;
+        const isLocal = userId === gameState.userId;
+        let visual = gameState.race.carVisuals[userId];
+        if (!visual) {
+            gameState.race.carVisuals[userId] = {
+                x: car.x,
+                y: car.y,
+                angle: car.angle || 0
+            };
+            continue;
+        }
+
+        if (isLocal) {
+            visual.x = car.x;
+            visual.y = car.y;
+            visual.angle = car.angle || 0;
+            continue;
+        }
+
+        const dx = car.x - visual.x;
+        const dy = car.y - visual.y;
+        const dist = Math.hypot(dx, dy);
+        const t = getPositionLerpFactor(dist);
+        visual.x += dx * t;
+        visual.y += dy * t;
+        visual.angle = lerpAngle(visual.angle, car.angle || 0, t);
+    }
+}
+
+function getRaceCarDrawState(userId, car) {
+    const visual = gameState.race.carVisuals[userId];
+    if (!visual) return car;
+    return { ...car, x: visual.x, y: visual.y, angle: visual.angle };
+}
+
+function loadRaceTrackAsset() {
+    const img = new Image();
+    img.src = RACE_TRACK_SRC;
+    img.onload = () => {
+        const width = img.naturalWidth;
+        const height = img.naturalHeight;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        gameState.race.track = buildRaceTrackFromImageData(ctx.getImageData(0, 0, width, height).data, width, height, img);
+    };
+    img.onerror = () => {
+        console.error('Failed to load race track image:', RACE_TRACK_SRC);
+    };
+}
+
+function isRaceTrackReady() {
+    return !!(gameState.race.track && gameState.race.track.zones && gameState.race.track.image);
+}
+
+function sampleImageCell(data, width, height, gridSize, gx, gy) {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let a = 0;
+    let count = 0;
+    for (let sy = 0; sy < gridSize; sy++) {
+        for (let sx = 0; sx < gridSize; sx++) {
+            const px = Math.min(width - 1, gx * gridSize + sx);
+            const py = Math.min(height - 1, gy * gridSize + sy);
+            const i = (py * width + px) * 4;
+            r += data[i];
+            g += data[i + 1];
+            b += data[i + 2];
+            a += data[i + 3];
+            count++;
+        }
+    }
+    return classifyRacePixel(r / count, g / count, b / count, a / count);
+}
+
+function isCheckeredPixel(data, width, px, py) {
+    let dark = 0;
+    let light = 0;
+    for (let dx = -5; dx <= 5; dx++) {
+        const x = Math.max(0, Math.min(width - 1, px + dx));
+        const i = (py * width + x) * 4;
+        const lum = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (lum < 85) dark++;
+        if (lum > 185) light++;
+    }
+    return dark >= 2 && light >= 2;
+}
+
+function classifyRacePixel(r, g, b, a) {
+    if (a < 80) return RACE_ZONE_OFF;
+    const lum = (r + g + b) / 3;
+
+    if (g > r + 12 && g > 65 && b < g - 5) return RACE_ZONE_OFF;
+    if (r > 145 && g < 105 && b < 105 && r > g + 35) return RACE_CELL_BARRIER;
+    if (lum > 210 && r > 175 && g > 175) return RACE_CELL_BARRIER;
+    if (r > 75 && r < 168 && g > 42 && g < 128 && b < 100 && r > b + 15) return RACE_ZONE_SLOW;
+    if (r >= 46 && r <= 118 && g >= 46 && g <= 118 && b >= 46 && b <= 118) return 2;
+    return RACE_ZONE_OFF;
+}
+
+function findFinishLineCells(data, width, height, gridSize, gridW, gridH, raw) {
+    const cells = [];
+    // Expand the finish detection band so the finish zone covers the full track
+    const yStart = Math.floor(height * 0.80);
+    const xStart = 0;
+    const xEnd = width;
+
+    for (let gy = Math.floor(yStart / gridSize); gy < gridH; gy++) {
+        for (let gx = Math.floor(xStart / gridSize); gx < Math.ceil(xEnd / gridSize); gx++) {
+            const idx = gy * gridW + gx;
+            const px = gx * gridSize + gridSize / 2;
+            const py = gy * gridSize + gridSize / 2;
+            const isRoad = raw[idx] === 2;
+            const isCheckered = isCheckeredPixel(data, width, px, py);
+            if (isRoad || isCheckered) {
+                cells.push({ gx, gy, px, py });
+            }
+        }
+    }
+    return cells;
+}
+
+function buildRaceTrackFromImageData(data, width, height, image) {
+    const gridSize = RACE_TRACK_GRID;
+    const gridW = Math.ceil(width / gridSize);
+    const gridH = Math.ceil(height / gridSize);
+    const raw = new Uint8Array(gridW * gridH);
+
+    for (let gy = 0; gy < gridH; gy++) {
+        for (let gx = 0; gx < gridW; gx++) {
+            raw[gy * gridW + gx] = sampleImageCell(data, width, height, gridSize, gx, gy);
+        }
+    }
+
+    const finishCells = findFinishLineCells(data, width, height, gridSize, gridW, gridH, raw);
+    let finishSeeds = finishCells;
+    if (!finishSeeds.length) {
+        const fallbackPx = width * 0.5;
+        const fallbackPy = height * 0.915;
+        finishSeeds = [{
+            gx: Math.floor(fallbackPx / gridSize),
+            gy: Math.floor(fallbackPy / gridSize),
+            px: fallbackPx,
+            py: fallbackPy
+        }];
+    }
+
+    const road = new Uint8Array(gridW * gridH);
+    const queue = [];
+    const push = (gx, gy) => {
+        if (gx < 0 || gy < 0 || gx >= gridW || gy >= gridH) return;
+        const idx = gy * gridW + gx;
+        if (road[idx]) return;
+        if (raw[idx] === RACE_CELL_BARRIER || raw[idx] === RACE_ZONE_OFF) return;
+        if (raw[idx] !== 2) return;
+        road[idx] = 1;
+        queue.push(idx);
+    };
+
+    finishSeeds.forEach(({ gx, gy }) => {
+        push(gx, gy);
+        push(gx + 1, gy);
+        push(gx - 1, gy);
+        push(gx, gy + 1);
+        push(gx, gy - 1);
+    });
+    for (let head = 0; head < queue.length; head++) {
+        const idx = queue[head];
+        const gx = idx % gridW;
+        const gy = Math.floor(idx / gridW);
+        push(gx + 1, gy);
+        push(gx - 1, gy);
+        push(gx, gy + 1);
+        push(gx, gy - 1);
+    }
+
+    const finishMask = new Uint8Array(gridW * gridH);
+    finishCells.forEach(({ gx, gy }) => {
+        const idx = gy * gridW + gx;
+        finishMask[idx] = 1;
+    });
+
+    const zones = new Uint8Array(gridW * gridH);
+    for (let i = 0; i < raw.length; i++) {
+        if (finishMask[i]) zones[i] = RACE_ZONE_FINISH;
+        else if (road[i]) zones[i] = RACE_ZONE_FAST;
+        else if (raw[i] === RACE_ZONE_SLOW) zones[i] = RACE_ZONE_SLOW;
+        else zones[i] = RACE_ZONE_OFF;
+    }
+
+    let finishPx = 0;
+    let finishPy = 0;
+    finishSeeds.forEach(({ px, py }) => {
+        finishPx += px;
+        finishPy += py;
+    });
+    const finishCenterX = finishPx / finishSeeds.length;
+    const finishCenterY = finishPy / finishSeeds.length;
+    // Default start angle: point left (so cars face left at spawn)
+    const startAngle = Math.PI;
+    // Place the spawn point a fixed offset along the start angle so cars spawn on the road
+    const spawnPx = finishCenterX - Math.cos(startAngle) * RACE_SPAWN_OFFSET_PX;
+    // Move spawn 200px upward so cars sit fully on the road
+    const spawnPy = finishCenterY - Math.sin(startAngle) * RACE_SPAWN_OFFSET_PX - 200;
+
+    const track = {
+        image,
+        width,
+        height,
+        scale: RACE_TRACK_SCALE,
+        gridSize,
+        gridW,
+        gridH,
+        zones,
+        ready: true,
+        startWorld: racePixelToWorld(spawnPx, spawnPy, width, height, RACE_TRACK_SCALE, startAngle)
+    };
+    gameState.race.track = track;
+    return track;
+}
+
+function racePixelToWorld(px, py, width, height, scale, angle) {
+    return {
+        x: (px - width / 2) * scale,
+        y: (py - height / 2) * scale,
+        angle
+    };
+}
+
+function worldToRaceGrid(wx, wy) {
+    const track = gameState.race.track;
+    if (!track) return null;
+    const px = wx / track.scale + track.width / 2;
+    const py = wy / track.scale + track.height / 2;
+    const gx = Math.floor(px / track.gridSize);
+    const gy = Math.floor(py / track.gridSize);
+    if (gx < 0 || gy < 0 || gx >= track.gridW || gy >= track.gridH) return null;
+    return { gx, gy, idx: gy * track.gridW + gx };
+}
+
+function getRaceZoneAtWorld(wx, wy) {
+    const grid = worldToRaceGrid(wx, wy);
+    if (!grid) return RACE_ZONE_OFF;
+    return gameState.race.track.zones[grid.idx];
+}
+
+function getRaceSurfaceMultiplier(zone) {
+    if (zone === RACE_ZONE_FAST || zone === RACE_ZONE_FINISH) return 1;
+    if (zone === RACE_ZONE_SLOW) return 0.88;
+    return 0.72;
+}
+
+function clampCarToRaceBounds(car) {
+    const track = gameState.race.track;
+    if (!track) return;
+    const halfW = (track.width * track.scale) / 2 - 36;
+    const halfH = (track.height * track.scale) / 2 - 36;
+    car.x = Math.max(-halfW, Math.min(halfW, car.x));
+    car.y = Math.max(-halfH, Math.min(halfH, car.y));
+}
+
+function updateRaceCamera() {
+    const car = gameState.race.localCar;
+    if (!car) return;
+    const visual = gameState.race.carVisuals[gameState.userId];
+    const cx = visual ? visual.x : car.x;
+    const cy = visual ? visual.y : car.y;
+    const targetX = -cx;
+    const targetY = -cy;
+    const lerpFactor = 1 - Math.pow(1 - CAMERA_SMOOTHING, gameState.dtFactor);
+    gameState.race.camera.x += (targetX - gameState.race.camera.x) * lerpFactor;
+    gameState.race.camera.y += (targetY - gameState.race.camera.y) * lerpFactor;
+}
+
+function getCurrentTaskText() {
+    const taskInput = document.getElementById('current-task-input');
+    if (taskInput && taskInput.value.trim()) return taskInput.value.trim();
+    const player = gameState.players[gameState.userId];
+    return (player && player.currentTask ? player.currentTask : '').trim();
+}
+
+function clearLocalPomodoroUi() {
+    const largeTimer = document.getElementById('pomodoro-large-timer');
+    const smallTimer = document.getElementById('pomodoro-small-timer');
+    if (largeTimer) largeTimer.classList.add('hidden');
+    if (smallTimer) smallTimer.classList.add('hidden');
+    const panel = document.getElementById('focus-sounds-panel');
+    if (panel) panel.classList.remove('active');
+    const taskPanel = document.getElementById('current-task-panel');
+    if (taskPanel) taskPanel.classList.remove('active');
+    const taskInput = document.getElementById('current-task-input');
+    if (taskInput) taskInput.blur();
+}
+
+function getPomodoroStartedAt(state) {
+    if (!state) return 0;
+    if (state.createdAt) return state.createdAt;
+    if (!state.endTime) return 0;
+
+    const durationMins = state.phase === 'break' ? state.breakDuration : state.workDuration;
+    return durationMins ? state.endTime - durationMins * 60000 : 0;
+}
+
+function shouldExpirePomodoroAfterCurrentTimer(state) {
+    const startedAt = getPomodoroStartedAt(state);
+    return startedAt && Date.now() - startedAt > POMODORO_MAX_AGE_MS;
+}
+
+function clearPomodoroSession(laptopId) {
+    if (laptopId === null || laptopId === undefined) return;
+    update(ref(database), { [lobbyPath(`pomodoro/${laptopId}`)]: null });
+}
+
+function cleanupStalePomodoroState(laptopId, state) {
+    if (!state || !shouldExpirePomodoroAfterCurrentTimer(state)) return false;
+
+    const timerFinished = state.phase === 'wait' || !state.endTime || Date.now() >= state.endTime;
+    if (timerFinished) {
+        clearPomodoroSession(laptopId);
+        if (state.claimedBy === gameState.userId) {
+            gameState.pomodoro.active = false;
+            gameState.pomodoro.laptopId = null;
+            gameState.pomodoro.phase = 'none';
+            gameState.isLockedIn = false;
+            clearLocalPomodoroUi();
+            if (gameState.focusAudioEngine) gameState.focusAudioEngine.stopAll();
+        }
+        return true;
+    }
+
+    return false;
+}
+
+function getPomodoroEntry(data, laptopId) {
+    if (!data) return null;
+    return data[laptopId] ?? data[String(laptopId)] ?? null;
+}
+
+function clearLaptopPomodoroState(laptop) {
+    laptop.claimedBy = null;
+    laptop.endTime = 0;
+    laptop.phase = 'none';
+}
+
+function applyPomodoroStateToLaptop(laptop, state) {
+    laptop.claimedBy = state.claimedBy || null;
+    laptop.endTime = state.endTime || 0;
+    laptop.phase = state.phase || 'none';
+    laptop.workDuration = state.workDuration;
+    laptop.breakDuration = state.breakDuration;
+    laptop.sessionsLeft = state.sessionsLeft;
+    laptop.totalSessions = state.totalSessions;
+}
+
+function syncLaptopsFromPomodoro(data) {
+    gameState.laptops.forEach(laptop => {
+        const state = getPomodoroEntry(data, laptop.id);
+        if (state && typeof state === 'object' && state.claimedBy) {
+            if (cleanupStalePomodoroState(laptop.id, state)) {
+                clearLaptopPomodoroState(laptop);
+                return;
+            }
+            applyPomodoroStateToLaptop(laptop, state);
+        } else {
+            clearLaptopPomodoroState(laptop);
+        }
+    });
+}
+
+function cleanupStaleRaceSession(session) {
+    if (!session) return false;
+
+    const now = Date.now();
+    const raceStartedAt = session.startTime || session.createdAt || 0;
+    const isExpired = session.phase === 'race'
+        ? raceStartedAt && now - raceStartedAt > RACE_MAX_AGE_MS
+        : session.createdAt && now - session.createdAt > RACE_MAX_AGE_MS;
+
+    if (!isExpired) return false;
+
+    update(ref(database), { [lobbyPath('minigames/race/current')]: null });
+    if (gameState.race.active) returnFromRace(false);
+    gameState.race.session = null;
+    gameState.race.localCar = null;
+    hideRacePanel();
+    hideRaceHud();
+    return true;
 }
 
 function isInDoorOpening(x) {
@@ -561,7 +1093,8 @@ function screenToWorld(clientX, clientY) {
 // Initialize game
 function init() {
     loadAssets();
-    setupUserSelection();
+    loadRaceTrackAsset();
+    setupLobbySelection();   // ← shows lobby screen first; calls setupUserSelection internally
     setupModal();
     initWindParticles();
     initLaptops();
@@ -605,16 +1138,52 @@ function initLaptops() {
                 sitX: worldX,
                 sitY: sitY,
                 intermediateX: worldX,
-                intermediateY: intermediateY
+                intermediateY: intermediateY,
+                claimedBy: null,
+                endTime: 0,
+                phase: 'none'
             });
         });
     });
 }
 
-// Setup User Selection UI
+// ─── Lobby Selection Screen ───────────────────────────────────────────────────
+// Shows before the user list.  Renders one button per LOBBY_CONFIG entry so
+// adding a lobby only requires touching LOBBY_CONFIG at the top of this file.
+function setupLobbySelection() {
+    const lobbyScreen  = document.getElementById('lobby-screen');
+    const loginScreen  = document.getElementById('login-screen');
+    const buttonsWrap  = document.getElementById('lobby-buttons');
+
+    // Dynamically render one button per configured lobby
+    buttonsWrap.innerHTML = '';
+    for (const [lobbyId, cfg] of Object.entries(LOBBY_CONFIG)) {
+        const btn = document.createElement('button');
+        btn.className = `lobby-btn ${cfg.iconClass || ''}`;
+        btn.dataset.lobby = lobbyId;
+        btn.innerHTML = `
+            <div class="lobby-icon" aria-hidden="true"></div>
+            <div class="lobby-label">${cfg.label}</div>
+        `;
+        btn.addEventListener('click', () => {
+            gameState.selectedLobby = lobbyId;
+            lobbyScreen.classList.remove('active');
+            loginScreen.classList.add('active');
+            setupUserSelection();   // now that a lobby is chosen, build the user list
+        });
+        buttonsWrap.appendChild(btn);
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Setup User Selection UI – filtered to the chosen lobby
 function setupUserSelection() {
     const userListContainer = document.getElementById('user-list');
     const usersRef = ref(database, 'users');
+
+    // The category name the player is allowed to see
+    const allowedCategory = LOBBY_CONFIG[gameState.selectedLobby]?.categoryName;
+
     onValue(usersRef, (snapshot) => {
         const users = snapshot.val();
         if (gameState.userId) return;
@@ -622,7 +1191,13 @@ function setupUserSelection() {
             userListContainer.innerHTML = '<div class="loading-users">لا يوجد مستخدمون متصلون حالياً.</div>';
             return;
         }
-        const onlineUsers = Object.entries(users).filter(([_, data]) => data.status === 'in-voice');
+
+        // Filter: only in-voice AND in the selected lobby's category
+        const onlineUsers = Object.entries(users).filter(([_, data]) =>
+            data.status === 'in-voice' &&
+            data.categoryName === allowedCategory
+        );
+
         if (onlineUsers.length === 0) {
             userListContainer.innerHTML = '<div class="loading-users">لا يوجد مستخدمون في قنوات الصوت حالياً.</div>';
             return;
@@ -724,10 +1299,17 @@ function startGame(userData) {
     listenToPlayers();
     listenToPomodoro();
     listenToRace();
-    get(ref(database, 'pomodoro')).then((pomoSnapshot) => {
+    // Track server time offset so race start/countdown is synchronized across clients
+    const offsetRef = ref(database, '.info/serverTimeOffset');
+    onValue(offsetRef, (snap) => {
+        gameState.serverTimeOffset = snap.val() || 0;
+    });
+    get(ref(database, lobbyPath('pomodoro'))).then((pomoSnapshot) => {
         const pomoData = pomoSnapshot.val() || {};
+        syncLaptopsFromPomodoro(pomoData);
         let activeLaptopId = null;
         for (const [lapId, state] of Object.entries(pomoData)) {
+            if (cleanupStalePomodoroState(lapId, state)) continue;
             if (state && state.claimedBy === gameState.userId) {
                 activeLaptopId = parseInt(lapId);
                 gameState.pomodoro.active = true;
@@ -738,6 +1320,7 @@ function startGame(userData) {
                 gameState.pomodoro.workDuration = state.workDuration;
                 gameState.pomodoro.breakDuration = state.breakDuration || 5;
                 gameState.pomodoro.totalSessions = state.totalSessions || state.sessionsLeft || 1;
+                gameState.pomodoro.createdAt = state.createdAt || Date.now();
 
                 break;
             }
@@ -773,10 +1356,17 @@ function startGame(userData) {
             }
 
             if (!gameState.players[gameState.userId]) {
-                gameState.players[gameState.userId] = { userId: gameState.userId, username: gameState.currentUser, x: spawnX, y: spawnY };
+                const localPlayer = {
+                    userId: gameState.userId,
+                    username: gameState.currentUser,
+                    x: spawnX,
+                    y: spawnY,
+                    renderX: spawnX,
+                    renderY: spawnY
+                };
+                gameState.players[gameState.userId] = localPlayer;
             } else {
-                gameState.players[gameState.userId].x = spawnX;
-                gameState.players[gameState.userId].y = spawnY;
+                teleportEntity(gameState.players[gameState.userId], spawnX, spawnY);
             }
             updatePlayerPosition(spawnX, spawnY);
             gameState.positionInitialized = true;
@@ -823,6 +1413,11 @@ function setupControls() {
     window.addEventListener('keyup', (e) => { gameState.keys[e.code] = false; });
     window.addEventListener('blur', () => { gameState.keys = {}; });
     window.addEventListener('wheel', (e) => {
+        // Disable scroll zoom while in an active race
+        if (gameState.race && gameState.race.active && gameState.race.session && gameState.race.session.phase === 'race') {
+            e.preventDefault();
+            return;
+        }
         const zoomSpeed = 0.001;
         gameState.zoom -= e.deltaY * zoomSpeed;
         gameState.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, gameState.zoom));
@@ -842,6 +1437,22 @@ function setupControls() {
         if (gameState.activeLaptop && !gameState.isLockedIn && !gameState.anim.active) {
             if (gameState.activeLaptop.claimedBy) return; // Ignore if claimed
             document.getElementById('pomodoro-modal').classList.add('active');
+        }
+    });
+
+    // Handle clicks on the in-game results overlay 'عودة' button
+    gameState.canvas.addEventListener('click', (e) => {
+        if (!gameState.race || !gameState.race.showResultsInGame) return;
+        const rect = gameState.canvas.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const btn = gameState.race.resultsButtonRect;
+        if (btn && cx >= btn.x && cx <= btn.x + btn.w && cy >= btn.y && cy <= btn.y + btn.h) {
+            // User clicked return button in results overlay
+            returnFromRace(true);
+            gameState.race.showResultsInGame = false;
+            gameState.race.finishedSession = null;
+            gameState.race.resultsButtonRect = null;
         }
     });
 
@@ -872,8 +1483,7 @@ function startKidnapAnimation(laptop) {
 
     if (document.hidden) {
         // Skip animation in background, teleport player, lock in, and start work immediately!
-        player.x = laptop.sitX;
-        player.y = laptop.sitY;
+        teleportEntity(player, laptop.sitX, laptop.sitY);
         updatePlayerPosition(laptop.sitX, laptop.sitY);
         gameState.isLockedIn = true;
         if (gameState.pomodoro.active && gameState.pomodoro.phase === 'wait') {
@@ -956,9 +1566,9 @@ function setupRaceUI() {
             }
             if (session.phase === 'lobby') {
                 if (session.hostId === gameState.userId) {
-                    update(ref(database), { 'minigames/race/current': null });
+                    update(ref(database), { [lobbyPath('minigames/race/current')]: null });
                 } else {
-                    update(ref(database), { [`minigames/race/current/participants/${gameState.userId}`]: null });
+                    update(ref(database), { [lobbyPath(`minigames/race/current/participants/${gameState.userId}`)]: null });
                 }
                 hideRacePanel();
             } else {
@@ -969,15 +1579,17 @@ function setupRaceUI() {
 }
 
 function listenToRace() {
-    const raceRef = ref(database, 'minigames/race/current');
+    const raceRef = ref(database, lobbyPath('minigames/race/current'));
     onValue(raceRef, (snapshot) => {
         const session = snapshot.val();
+        if (cleanupStaleRaceSession(session)) return;
         const isParticipant = session && session.participants && session.participants[gameState.userId];
 
         if (!isParticipant) {
             if (gameState.race.active) returnFromRace(false);
             gameState.race.session = null;
             gameState.race.localCar = null;
+            gameState.race.carVisuals = {};
             hideRacePanel();
             hideRaceHud();
             return;
@@ -995,8 +1607,12 @@ function listenToRace() {
             hideRacePanel();
             startLocalRace(session);
         } else if (session.phase === 'finished') {
-            gameState.race.active = false;
-            showRaceResults(session);
+            // Keep the race rendering active so we can show results in-game
+            gameState.race.active = true;
+            gameState.race.session = session;
+            gameState.race.showResultsInGame = true;
+            gameState.race.finishedSession = session;
+            hideRacePanel();
             hideRaceHud();
             scheduleRaceReturn();
         }
@@ -1006,9 +1622,11 @@ function listenToRace() {
 async function createRaceLobby() {
     if (!gameState.userId || !isBreakActive()) return;
 
-    const existing = await get(ref(database, 'minigames/race/current'));
+    const existing = await get(ref(database, lobbyPath('minigames/race/current')));
     const existingRace = existing.val();
-    if (existingRace && existingRace.phase !== 'finished' && Date.now() - (existingRace.createdAt || 0) < 15 * 60000) {
+    if (existingRace && cleanupStaleRaceSession(existingRace)) {
+        // The stale race was cleared; allow a new lobby to be created below.
+    } else if (existingRace && existingRace.phase !== 'finished' && Date.now() - (existingRace.createdAt || 0) < RACE_MAX_AGE_MS) {
         showRaceMessage('هناك سباق قائم الآن');
         return;
     }
@@ -1035,7 +1653,7 @@ async function createRaceLobby() {
 
     const raceId = `${gameState.userId}_${Date.now()}`;
     update(ref(database), {
-        'minigames/race/current': {
+        [lobbyPath('minigames/race/current')]: {
             id: raceId,
             hostId: gameState.userId,
             phase: 'lobby',
@@ -1135,6 +1753,10 @@ function hideRaceHud() {
 function startHostedRace() {
     const session = gameState.race.session;
     if (!session || session.hostId !== gameState.userId || session.phase !== 'lobby') return;
+    if (!isRaceTrackReady()) {
+        showRaceMessage('جاري تحميل حلبة السباق، حاول مرة أخرى');
+        return;
+    }
 
     const cars = {};
     Object.keys(session.participants || {}).forEach((userId) => {
@@ -1143,35 +1765,57 @@ function startHostedRace() {
     });
 
     update(ref(database), {
-        'minigames/race/current/phase': 'race',
-        'minigames/race/current/startTime': Date.now() + 3500,
-        'minigames/race/current/cars': cars,
-        'minigames/race/current/results': null
+        [lobbyPath('minigames/race/current/phase')]: 'race',
+        // Use server-synced time so all clients start together
+        [lobbyPath('minigames/race/current/startTime')]: serverNow() + 3500,
+        [lobbyPath('minigames/race/current/cars')]: cars,
+        [lobbyPath('minigames/race/current/results')]: null
     });
 }
 
 function startLocalRace(session) {
     if (gameState.race.active && gameState.race.localCar) return;
     const participant = session.participants[gameState.userId];
+    const freshCar = createRaceCar(participant.index || 0, participant.username || gameState.currentUser || 'لاعب');
     gameState.race.active = true;
     gameState.race.localResultSent = false;
     gameState.race.returnPoint = participant.returnPoint;
-    gameState.race.localCar = {
-        ...createRaceCar(participant.index || 0, participant.username || gameState.currentUser || 'لاعب'),
-        ...(session.cars && session.cars[gameState.userId] ? session.cars[gameState.userId] : {})
-    };
+    gameState.race.localCar = freshCar;
+    gameState.race.carVisuals = {};
+    // Remember previous zoom and double it for race view
+    gameState.race.prevZoom = gameState.zoom || 1;
+    gameState.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (gameState.race.prevZoom || 1) * 2));
+    const car = gameState.race.localCar;
+    car.ignoreFinishUntilLeave = true;
+    car.leftFinishZone = false;
+    car.canCountLap = false;
+    car.lapDistance = 0;
+    car.lastLapAt = 0;
+    gameState.race.camera.x = -car.x;
+    gameState.race.camera.y = -car.y;
+    // Mark this user as working so others see avatar bobbing while racing
+    update(ref(database), { [`users/${gameState.userId}/isWorking`]: true });
 }
 
 function createRaceCar(index, username) {
+    const start = gameState.race.track?.startWorld || { x: 0, y: 0, angle: 0 };
+    const laneOffset = (index - 2.5) * 58;
+    const x = start.x - Math.sin(start.angle) * laneOffset;
+    const y = start.y + Math.cos(start.angle) * laneOffset;
     return {
         username,
-        x: 40 + (index % 6) * 48,
-        y: RACE_TRACK.outerRy - 52 - Math.floor(index / 6) * 44,
-        angle: 0,
+        x,
+        y,
+        angle: start.angle,
         speed: 0,
         distance: 0,
         lap: 1,
-        lastProgress: 0,
+        raceStarted: false,
+        leftFinishZone: false,
+        canCountLap: false,
+        ignoreFinishUntilLeave: true,
+        lapDistance: 0,
+        lastLapAt: 0,
         finished: false
     };
 }
@@ -1182,12 +1826,12 @@ function updateRaceMode() {
     if (!session || !car) return;
 
     if (!isBreakActive()) {
-        if (session.hostId === gameState.userId) update(ref(database), { 'minigames/race/current': null });
+        if (session.hostId === gameState.userId) update(ref(database), { [lobbyPath('minigames/race/current')]: null });
         returnFromRace(false);
         return;
     }
 
-    const now = Date.now();
+    const now = serverNow();
     if (now < (session.startTime || 0) || car.finished) return;
 
     const up = gameState.keys['KeyW'] || gameState.keys['ArrowUp'];
@@ -1196,21 +1840,31 @@ function updateRaceMode() {
     const right = gameState.keys['KeyD'] || gameState.keys['ArrowRight'];
     const dt = gameState.dtFactor;
 
-    if (up) car.speed += 0.16 * dt;
-    if (down) car.speed -= 0.11 * dt;
+    if (up) car.speed += 0.16 * dt * RACE_SPEED_FACTOR;
+    if (down) car.speed -= 0.11 * dt * RACE_SPEED_FACTOR;
     if (!up && !down) car.speed *= Math.pow(0.982, dt);
-    car.speed = Math.max(-3.2, Math.min(8.4, car.speed));
+    // Apply global race speed factor to acceleration and clamp speeds
+    // Scale the current speed clamp to RACE_SPEED_FACTOR
+    car.speed = Math.max(-3.2 * RACE_SPEED_FACTOR, Math.min(8.4 * RACE_SPEED_FACTOR, car.speed));
 
     const turn = (right ? 1 : 0) - (left ? 1 : 0);
     if (turn !== 0 && Math.abs(car.speed) > 0.25) {
         car.angle += turn * 0.047 * dt * Math.sign(car.speed);
     }
 
+    const prevX = car.x;
+    const prevY = car.y;
     car.x += Math.cos(car.angle) * car.speed * dt;
     car.y += Math.sin(car.angle) * car.speed * dt;
+    clampCarToRaceBounds(car);
 
-    if (!isOnRaceRoad(car.x, car.y)) {
-        car.speed *= Math.pow(0.88, dt);
+    const zone = getRaceZoneAtWorld(car.x, car.y);
+    const surface = getRaceSurfaceMultiplier(zone);
+    if (surface < 1) {
+        car.speed *= Math.pow(surface, dt);
+    }
+    if (zone === RACE_ZONE_FAST || zone === RACE_ZONE_SLOW || zone === RACE_ZONE_FINISH) {
+        car.lapDistance = (car.lapDistance || 0) + Math.hypot(car.x - prevX, car.y - prevY);
     }
 
     updateRaceProgress(car);
@@ -1220,41 +1874,48 @@ function updateRaceMode() {
         car.finished = true;
         car.speed = 0;
         gameState.race.localResultSent = true;
-        const finishTime = Date.now() - (session.startTime || Date.now());
+        const finishTime = serverNow() - (session.startTime || serverNow());
         const participants = Object.keys(session.participants || {});
         const results = { ...(session.results || {}), [gameState.userId]: { finishTime, username: car.username } };
         const updates = {
-            [`minigames/race/current/results/${gameState.userId}`]: { finishTime, username: car.username },
-            [`minigames/race/current/cars/${gameState.userId}/finished`]: true,
-            [`minigames/race/current/cars/${gameState.userId}/lap`]: RACE_LAPS
+            [lobbyPath(`minigames/race/current/results/${gameState.userId}`)]: { finishTime, username: car.username },
+            [lobbyPath(`minigames/race/current/cars/${gameState.userId}/finished`)]: true,
+            [lobbyPath(`minigames/race/current/cars/${gameState.userId}/lap`)]: RACE_LAPS
         };
         if (participants.every(id => results[id])) {
-            updates['minigames/race/current/phase'] = 'finished';
-            updates['minigames/race/current/finishedAt'] = Date.now();
+            updates[lobbyPath('minigames/race/current/phase')] = 'finished';
+            updates[lobbyPath('minigames/race/current/finishedAt')] = Date.now();
         }
         update(ref(database), updates);
     }
 }
 
 function updateRaceProgress(car) {
-    const progress = getRaceProgress(car.x, car.y);
-    let delta = progress - car.lastProgress;
-    if (delta < -0.5) delta += 1;
-    if (delta > 0.5) delta -= 1;
-    if (delta > -0.03) car.distance = Math.max(0, car.distance + Math.max(0, delta));
-    car.lastProgress = progress;
-    car.lap = Math.min(RACE_LAPS, Math.floor(car.distance) + 1);
-}
+    const zone = getRaceZoneAtWorld(car.x, car.y);
+    const inFinish = zone === RACE_ZONE_FINISH;
 
-function getRaceProgress(x, y) {
-    const angle = Math.atan2(y / RACE_TRACK.outerRy, x / RACE_TRACK.outerRx);
-    return (RACE_TRACK.startAngle - angle + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2);
-}
+    if (car.ignoreFinishUntilLeave) {
+        if (!inFinish) car.ignoreFinishUntilLeave = false;
+        return;
+    }
 
-function isOnRaceRoad(x, y) {
-    const outer = Math.pow(x / RACE_TRACK.outerRx, 2) + Math.pow(y / RACE_TRACK.outerRy, 2);
-    const inner = Math.pow(x / RACE_TRACK.innerRx, 2) + Math.pow(y / RACE_TRACK.innerRy, 2);
-    return outer <= 1 && inner >= 1;
+    if (inFinish && car.leftFinishZone && car.canCountLap) {
+        const now = Date.now();
+        const sinceLastLap = now - (car.lastLapAt || 0);
+        if (sinceLastLap >= RACE_MIN_LAP_MS && (car.lapDistance || 0) >= RACE_MIN_LAP_DIST) {
+            car.distance = Math.min(RACE_LAPS, car.distance + 1);
+            car.lap = Math.min(RACE_LAPS, car.distance + 1);
+            car.lastLapAt = now;
+            car.lapDistance = 0;
+            car.canCountLap = false;
+            car.leftFinishZone = false;
+        }
+    }
+
+    if (!inFinish) {
+        car.leftFinishZone = true;
+        car.canCountLap = true;
+    }
 }
 
 function syncRaceCar(force) {
@@ -1264,7 +1925,7 @@ function syncRaceCar(force) {
     const car = gameState.race.localCar;
     if (!car || !gameState.race.session) return;
     update(ref(database), {
-        [`minigames/race/current/cars/${gameState.userId}`]: {
+        [lobbyPath(`minigames/race/current/cars/${gameState.userId}`)]: {
             username: car.username,
             x: car.x,
             y: car.y,
@@ -1282,7 +1943,7 @@ function scheduleRaceReturn() {
     gameState.race.finishReturnTimer = setTimeout(() => returnFromRace(true), 8000);
     if (gameState.race.session && gameState.race.session.hostId === gameState.userId) {
         setTimeout(() => {
-            update(ref(database), { 'minigames/race/current': null });
+            update(ref(database), { [lobbyPath('minigames/race/current')]: null });
         }, 11000);
     }
 }
@@ -1295,13 +1956,24 @@ function returnFromRace(clearPanel) {
     const player = gameState.players[gameState.userId];
     const returnPoint = gameState.race.returnPoint;
     if (player && returnPoint) {
-        player.x = returnPoint.x;
-        player.y = returnPoint.y;
-        updatePlayerPosition(player.x, player.y);
+        teleportEntity(player, returnPoint.x, returnPoint.y);
+        updatePlayerPosition(returnPoint.x, returnPoint.y);
     }
     gameState.race.active = false;
     gameState.race.localCar = null;
+    gameState.race.carVisuals = {};
     gameState.race.localResultSent = false;
+    // Clear working flag so others know the player is no longer racing
+    if (gameState.userId) update(ref(database), { [`users/${gameState.userId}/isWorking`]: false });
+    // Restore previous zoom if present
+    if (gameState.race.prevZoom !== undefined) {
+        gameState.zoom = gameState.race.prevZoom;
+        delete gameState.race.prevZoom;
+    }
+    // Clear any in-game results overlay state
+    gameState.race.showResultsInGame = false;
+    gameState.race.finishedSession = null;
+    gameState.race.resultsButtonRect = null;
     if (clearPanel) hideRacePanel();
     hideRaceHud();
 }
@@ -1358,17 +2030,19 @@ function setupPomodoroUI() {
             gameState.pomodoro.breakDuration = 3; // 3 minutes
             gameState.pomodoro.sessionsLeft = 3;
             gameState.pomodoro.totalSessions = 3;
+            gameState.pomodoro.createdAt = Date.now();
             gameState.pomodoro.phase = 'wait';
 
             const updates = {};
-            updates[`pomodoro/${laptop.id}`] = {
+            updates[lobbyPath(`pomodoro/${laptop.id}`)] = {
                 claimedBy: gameState.userId,
                 phase: 'wait',
                 endTime: 0,
                 workDuration: 10 / 60,
                 breakDuration: 3,
                 sessionsLeft: 3,
-                totalSessions: 3
+                totalSessions: 3,
+                createdAt: Date.now()
             };
             update(ref(database), updates);
             startKidnapAnimation(laptop);
@@ -1402,17 +2076,19 @@ function setupPomodoroUI() {
         gameState.pomodoro.breakDuration = breakMins;
         gameState.pomodoro.sessionsLeft = sessions;
         gameState.pomodoro.totalSessions = sessions;
+        gameState.pomodoro.createdAt = Date.now();
         gameState.pomodoro.phase = 'wait';
 
         const updates = {};
-        updates[`pomodoro/${laptop.id}`] = {
+        updates[lobbyPath(`pomodoro/${laptop.id}`)] = {
             claimedBy: gameState.userId,
             phase: 'wait',
             endTime: 0,
             workDuration: workMins,
             breakDuration: breakMins,
             sessionsLeft: sessions,
-            totalSessions: sessions
+            totalSessions: sessions,
+            createdAt: Date.now()
         };
         update(ref(database), updates);
 
@@ -1420,13 +2096,19 @@ function setupPomodoroUI() {
     });
 }
 
-function showSuccessModal(totalSessions, workDuration) {
+function showSuccessModal(totalSessions, workDuration, taskText = '') {
     const modal = document.getElementById('success-modal');
     if (!modal) return;
 
     const totalMins = Math.floor(totalSessions * workDuration);
     document.getElementById('success-total-time').textContent = `${totalMins} دقيقة`;
     document.getElementById('success-sessions-count').textContent = totalSessions;
+    const taskEl = document.getElementById('success-task');
+    if (taskEl) {
+        const cleanTask = taskText.trim();
+        taskEl.textContent = cleanTask ? `عملت على ${cleanTask}` : '';
+        taskEl.style.display = cleanTask ? 'block' : 'none';
+    }
 
     const localPlayer = gameState.players[gameState.userId];
     const nameEl = document.getElementById('success-name');
@@ -1475,9 +2157,10 @@ function startPomodoroPhase(phase) {
             workDuration: gameState.pomodoro.workDuration,
             breakDuration: gameState.pomodoro.breakDuration,
             sessionsLeft: gameState.pomodoro.sessionsLeft,
-            totalSessions: gameState.pomodoro.totalSessions
+            totalSessions: gameState.pomodoro.totalSessions,
+            createdAt: gameState.pomodoro.createdAt || Date.now()
         };
-        updates[`pomodoro/${gameState.pomodoro.laptopId}`] = pomoData;
+        updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = pomoData;
         update(ref(database), updates);
     }
 
@@ -1503,27 +2186,9 @@ function startPomodoroPhase(phase) {
 }
 
 function listenToPomodoro() {
-    const pomodoroRef = ref(database, 'pomodoro');
+    const pomodoroRef = ref(database, lobbyPath('pomodoro'));
     onValue(pomodoroRef, (snapshot) => {
-        const data = snapshot.val() || {};
-        gameState.laptops.forEach(laptop => {
-            const state = data[laptop.id];
-            if (state) {
-                laptop.claimedBy = state.claimedBy;
-                laptop.endTime = state.endTime;
-                laptop.phase = state.phase;
-                laptop.workDuration = state.workDuration;
-                laptop.breakDuration = state.breakDuration;
-                laptop.sessionsLeft = state.sessionsLeft;
-                laptop.totalSessions = state.totalSessions;
-
-
-            } else {
-                laptop.claimedBy = null;
-                laptop.endTime = 0;
-                laptop.phase = 'none';
-            }
-        });
+        syncLaptopsFromPomodoro(snapshot.val());
     });
 }
 
@@ -1545,10 +2210,16 @@ function initializePlayerPosition() {
     const spawnX = 0;
     const spawnY = BG_HEIGHT / 4;
     if (!gameState.players[gameState.userId]) {
-        gameState.players[gameState.userId] = { userId: gameState.userId, username: gameState.currentUser, x: spawnX, y: spawnY };
+        gameState.players[gameState.userId] = {
+            userId: gameState.userId,
+            username: gameState.currentUser,
+            x: spawnX,
+            y: spawnY,
+            renderX: spawnX,
+            renderY: spawnY
+        };
     } else {
-        gameState.players[gameState.userId].x = spawnX;
-        gameState.players[gameState.userId].y = spawnY;
+        teleportEntity(gameState.players[gameState.userId], spawnX, spawnY);
     }
     updatePlayerPosition(spawnX, spawnY);
     gameState.positionInitialized = true;
@@ -1556,22 +2227,47 @@ function initializePlayerPosition() {
 
 function listenToPlayers() {
     const usersRef = ref(database, 'users');
+    // The category that belongs to the active lobby – used to exclude the other lobby
+    const allowedCategory = LOBBY_CONFIG[gameState.selectedLobby]?.categoryName;
+
     onValue(usersRef, (snapshot) => {
         const users = snapshot.val();
         if (users) {
             const currentIdsInSnapshot = new Set();
             for (const [userId, userData] of Object.entries(users)) {
+                // Hard separation: skip anyone not in the same lobby category
+                if (userData.categoryName !== allowedCategory) continue;
+
                 if (userData.status === 'in-voice') {
                     currentIdsInSnapshot.add(userId);
                     const isCurrentUser = userId === gameState.userId;
                     if (!gameState.players[userId]) {
-                        gameState.players[userId] = { userId, username: userData.username, channelName: userData.channelName, avatar: userData.avatar, x: userData.x || 0, y: userData.y || 0 };
+                        const spawnX = userData.x || 0;
+                        const spawnY = userData.y || 0;
+                        gameState.players[userId] = {
+                            userId,
+                            username: userData.username,
+                            channelName: userData.channelName,
+                            avatar: userData.avatar,
+                            x: spawnX,
+                            y: spawnY,
+                            renderX: spawnX,
+                            renderY: spawnY,
+                            currentTask: userData.currentTask || "",
+                            activeInGame: userData.activeInGame === true,
+                            avatarColorAlpha: userData.activeInGame === true ? 1 : 0,
+                            isMoving: userData.isMoving || false,
+                            isSprinting: userData.isSprinting || false,
+                            isLockedIn: userData.isLockedIn || false,
+                            isWorking: userData.isWorking || false
+                        };
                     } else {
                         const player = gameState.players[userId];
                         player.username = userData.username;
                         player.channelName = userData.channelName;
                         player.avatar = userData.avatar;
                         player.currentTask = userData.currentTask || "";
+                        player.activeInGame = userData.activeInGame === true;
 
                         if (isCurrentUser) {
                             const taskInput = document.getElementById('current-task-input');
@@ -1582,9 +2278,7 @@ function listenToPlayers() {
                         }
 
                         if (!isCurrentUser) {
-                            const player = gameState.players[userId];
-                            player.x = userData.x || 0;
-                            player.y = userData.y || 0;
+                            setEntityTarget(player, userData.x || 0, userData.y || 0);
                             player.isMoving = userData.isMoving || false;
                             player.isSprinting = userData.isSprinting || false;
                             player.isLockedIn = userData.isLockedIn || false;
@@ -1637,8 +2331,9 @@ function checkCollision(x, y) {
 function updateCamera() {
     const player = gameState.players[gameState.userId];
     if (!player) return;
-    const targetX = -player.x;
-    const targetY = -player.y;
+    const { x: px, y: py } = getPlayerRenderPos(player);
+    const targetX = -px;
+    const targetY = -py;
     const lerpFactor = 1 - Math.pow(1 - CAMERA_SMOOTHING, gameState.dtFactor);
     gameState.camera.x += (targetX - gameState.camera.x) * lerpFactor;
     gameState.camera.y += (targetY - gameState.camera.y) * lerpFactor;
@@ -1662,10 +2357,12 @@ function handleMovement() {
         const nextY = player.y + dy;
         if (!checkCollision(nextX, player.y)) player.x = nextX;
         if (!checkCollision(player.x, nextY)) player.y = nextY;
+        player.smoothMove = false;
+        syncEntityRenderToTarget(player);
         updatePlayerPosition(player.x, player.y);
 
         if (Math.random() < (isSprinting ? 0.8 : 0.4) * gameState.dtFactor) {
-            spawnDust(player.x, player.y, isSprinting ? 2 : 1, false);
+            spawnDust(player.renderX, player.renderY, isSprinting ? 2 : 1, false);
         }
     } else {
         if (player.isMoving) {
@@ -1777,6 +2474,7 @@ function updateAnimation() {
         }
     }
 
+    syncEntityRenderToTarget(player);
     // Sync position continuously during animation to prevent snapping for other clients
     updatePlayerPosition(player.x, player.y);
 }
@@ -1817,7 +2515,10 @@ function updatePlayerBobbing() {
         const lockedIn = isLocal ? gameState.isLockedIn : player.isLockedIn;
 
         if (!isLocal && player.isMoving) {
-            if (Math.random() < 0.2 * gameState.dtFactor) spawnDust(player.x, player.y, 1, false);
+            if (Math.random() < 0.2 * gameState.dtFactor) {
+                const { x: dustX, y: dustY } = getPlayerRenderPos(player);
+                spawnDust(dustX, dustY, 1, false);
+            }
         }
 
         if (player.isMoving && !lockedIn && (!gameState.anim.active || gameState.anim.phase !== 'pull')) {
@@ -1856,7 +2557,9 @@ function updateNametags() {
         if (isLocal) {
             targetAlpha = lockedIn ? 0 : 1;
         } else {
-            const dist = Math.hypot(player.x - localPlayer.x, player.y - localPlayer.y);
+            const localPos = getPlayerRenderPos(localPlayer);
+            const playerPos = getPlayerRenderPos(player);
+            const dist = Math.hypot(playerPos.x - localPos.x, playerPos.y - localPos.y);
             if (lockedIn) {
                 targetAlpha = 0;
             } else if (dist < 200) {
@@ -1872,6 +2575,19 @@ function updateNametags() {
     }
 }
 
+function updateAvatarColorFade() {
+    for (const player of Object.values(gameState.players)) {
+        if (player.avatarColorAlpha === undefined) {
+            player.avatarColorAlpha = player.activeInGame ? 1 : 0;
+        }
+        const isLocal = player.userId === gameState.userId;
+        const targetAlpha = (isLocal || player.activeInGame) ? 1 : 0;
+        const fadeSpeed = targetAlpha > player.avatarColorAlpha ? 0.1 : 0.18;
+        const lerpFactor = 1 - Math.pow(1 - fadeSpeed, gameState.dtFactor);
+        player.avatarColorAlpha += (targetAlpha - player.avatarColorAlpha) * lerpFactor;
+    }
+}
+
 function gameLoop(timestamp) {
     if (!timestamp) timestamp = performance.now();
     if (!gameState.lastTime) gameState.lastTime = timestamp;
@@ -1882,8 +2598,19 @@ function gameLoop(timestamp) {
     gameState.dtFactor = deltaTime / 16.666; // Standardize to 60fps (1000ms / 60 = 16.666ms)
 
     updatePomodoro();
+    cleanupStaleRaceSession(gameState.race.session);
     if (gameState.race.active && gameState.race.session && gameState.race.session.phase === 'race') {
         updateRaceMode();
+        updateRaceCarVisuals();
+        updateRaceCamera();
+        renderRace();
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+    // If the race has finished, keep rendering the race screen so we can show in-game results
+    if (gameState.race.active && gameState.race.session && gameState.race.session.phase === 'finished') {
+        updateRaceCarVisuals();
+        updateRaceCamera();
         renderRace();
         requestAnimationFrame(gameLoop);
         return;
@@ -1891,9 +2618,11 @@ function gameLoop(timestamp) {
 
     handleMovement();
     updateAnimation();
+    updatePlayerRenderPositions();
     updateCamera();
     updatePlayerBobbing();
     updateNametags();
+    updateAvatarColorFade();
     updateWindParticles();
     updateDustParticles();
     updateInteractions();
@@ -2063,131 +2792,174 @@ function renderRace() {
     const canvas = gameState.canvas;
     const session = gameState.race.session;
     const localCar = gameState.race.localCar;
+    const track = gameState.race.track;
     if (!ctx || !canvas || !session || !localCar) return;
 
-    ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = '#1f4f3a';
+    ctx.fillStyle = '#1a3324';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const trackWidth = RACE_TRACK.outerRx * 2 + 220;
-    const trackHeight = RACE_TRACK.outerRy * 2 + 180;
-    const scale = Math.min(canvas.width / trackWidth, canvas.height / trackHeight);
+    if (!track || !track.image) {
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 24px Rubik';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('جاري تحميل حلبة السباق...', canvas.width / 2, canvas.height / 2);
+        updateRaceHud(session, localCar);
+        return;
+    }
+
+    const drawW = track.width * track.scale;
+    const drawH = track.height * track.scale;
 
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.scale(scale, scale);
+    ctx.scale(gameState.zoom, gameState.zoom);
+    ctx.translate(gameState.race.camera.x, gameState.race.camera.y);
 
-    drawRaceTrack();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(track.image, -drawW / 2, -drawH / 2, drawW, drawH);
 
     const cars = { ...(session.cars || {}) };
     cars[gameState.userId] = localCar;
     Object.entries(cars).forEach(([userId, car]) => {
         const participant = session.participants && session.participants[userId];
-        drawRaceCar(car, participant ? participant.index || 0 : 0, userId === gameState.userId, userId, participant);
+        const drawCar = getRaceCarDrawState(userId, car);
+        drawRaceCar(drawCar, participant ? participant.index || 0 : 0, userId === gameState.userId, userId, participant);
     });
 
-    const now = Date.now();
+    ctx.restore();
+
+    const now = serverNow();
     if (now < (session.startTime || 0)) {
         const count = Math.max(1, Math.ceil(((session.startTime || 0) - now) / 1000));
         ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-        ctx.fillRect(-220, -105, 440, 210);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = 'white';
         ctx.font = 'bold 92px Rubik';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(count.toString(), 0, 0);
+        ctx.fillText(count.toString(), canvas.width / 2, canvas.height / 2);
     } else if (localCar.finished) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-        ctx.fillRect(-250, -70, 500, 140);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = 'white';
         ctx.font = 'bold 34px Rubik';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('انتهيت!', 0, 0);
+        ctx.fillText('انتهيت!', canvas.width / 2, canvas.height / 2);
     }
 
-    ctx.restore();
-    updateRaceHud(session, localCar);
-}
+    // If the session is finished, draw the in-game results overlay
+    const showResults = (session.phase === 'finished') || !!gameState.race.showResultsInGame;
+    if (showResults) {
+        const results = session.results || {};
+        const participants = Object.entries(session.participants || {})
+            .sort(([, a], [, b]) => (a.index || 0) - (b.index || 0))
+            .map(([id, p]) => ({ id, ...p }));
+        // sort by finish time for ranking display
+        const ranked = participants.slice().sort((a, b) => (results[a.id]?.finishTime || Infinity) - (results[b.id]?.finishTime || Infinity));
 
-function drawRaceTrack() {
-    const ctx = gameState.ctx;
-    ctx.save();
-    ctx.imageSmoothingEnabled = false;
+        const panelW = Math.min(520, canvas.width - 80);
+        const rowH = 44;
+        const panelH = 120 + ranked.length * rowH;
+        const px = (canvas.width - panelW) / 2;
+        const py = (canvas.height - panelH) / 2;
 
-    drawPixelOval(ctx, 0, 0, RACE_TRACK.outerRx + 104, RACE_TRACK.outerRy + 72, 24, '#6aa84f');
-    drawPixelGrassTiles(ctx, RACE_TRACK.outerRx + 130, RACE_TRACK.outerRy + 90);
+        // panel background
+        ctx.fillStyle = 'rgba(12, 12, 12, 0.92)';
+        drawRoundedRectPath(ctx, px, py, panelW, panelH, 12);
+        ctx.fill();
 
-    drawPixelOval(ctx, 0, 0, RACE_TRACK.outerRx, RACE_TRACK.outerRy, 18, '#596168');
-    drawPixelOval(ctx, 0, 0, RACE_TRACK.outerRx - 38, RACE_TRACK.outerRy - 26, 18, '#707982');
+        // Title
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 20px Rubik';
+        ctx.textAlign = 'left';
+        ctx.fillText('النتائج', px + 20, py + 34);
 
-    drawPixelOvalOutline(ctx, 0, 0, RACE_TRACK.outerRx - 34, RACE_TRACK.outerRy - 22, 18, 10, '#e6edf0');
+        // Rows
+        ctx.font = '16px Rubik';
+        for (let i = 0; i < ranked.length; i++) {
+            const row = ranked[i];
+            const ry = py + 60 + i * rowH;
+            // background strip
+            if (i % 2 === 0) {
+                ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                ctx.fillRect(px + 12, ry - 8, panelW - 24, rowH - 6);
+            }
 
-    drawPixelDashedOval(ctx, 0, 0, (RACE_TRACK.outerRx + RACE_TRACK.innerRx) / 2, (RACE_TRACK.outerRy + RACE_TRACK.innerRy) / 2);
+            // rank
+            ctx.fillStyle = '#f4c82b';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${i + 1}.`, px + 24, ry + 12);
 
-    drawPixelOval(ctx, 0, 0, RACE_TRACK.innerRx, RACE_TRACK.innerRy, 18, '#3f7f43');
-    drawPixelGrassTiles(ctx, RACE_TRACK.innerRx - 20, RACE_TRACK.innerRy - 20);
+            // avatar
+            const avatarSize = 36;
+            const ax = px + 60;
+            const ay = ry - 8 + (rowH - avatarSize) / 2;
+            let img = gameState.avatarCache[row.id];
+            if (!img && row.avatar) {
+                const a = new Image();
+                a.crossOrigin = 'anonymous';
+                a.src = row.avatar;
+                a.onload = () => { gameState.avatarCache[row.id] = a; };
+                a.onerror = () => { gameState.avatarCache[row.id] = 'failed'; };
+                img = null;
+            }
 
-    drawPixelOvalOutline(ctx, 0, 0, RACE_TRACK.outerRx, RACE_TRACK.outerRy, 18, 8, '#2f3438');
-    drawPixelOvalOutline(ctx, 0, 0, RACE_TRACK.innerRx, RACE_TRACK.innerRy, 18, 8, '#2f3438');
+            const playerObj = gameState.players[row.id];
+            const shouldGray = !!(playerObj && playerObj.isWorking && row.id !== gameState.userId);
 
-    const finishY = RACE_TRACK.outerRy - 64;
-    ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < 7; i++) {
-        ctx.fillRect(-72 + i * 24, finishY, 12, 86);
-        ctx.fillRect(-60 + i * 24, finishY + 12, 12, 62);
-    }
-    ctx.fillStyle = '#111';
-    ctx.fillRect(-75, finishY, 6, 86);
-    ctx.fillRect(75, finishY, 6, 86);
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(ax, ay, avatarSize, avatarSize);
+            ctx.clip();
+            if (img && img !== 'failed') {
+                if (shouldGray) ctx.filter = 'grayscale(60%)';
+                ctx.drawImage(img, ax, ay, avatarSize, avatarSize);
+                ctx.filter = 'none';
+            } else {
+                // placeholder avatar
+                const placeholderColor = '#086fb6';
+                ctx.fillStyle = shouldGray ? '#9a9a9a' : placeholderColor;
+                ctx.fillRect(ax, ay, avatarSize, avatarSize);
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 14px Rubik';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText((row.username || '?').charAt(0).toUpperCase(), ax + avatarSize / 2, ay + avatarSize / 2 + 1);
+            }
+            ctx.restore();
 
-    ctx.restore();
-}
+            // name
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'left';
+            ctx.fillText(row.username || 'لاعب', px + 64 + avatarSize + 8, ry + 12);
 
-function drawPixelOval(ctx, x, y, rx, ry, block, color) {
-    ctx.fillStyle = color;
-    for (let yy = -ry; yy <= ry; yy += block) {
-        const ratio = 1 - Math.pow(yy / ry, 2);
-        const width = Math.floor((rx * Math.sqrt(Math.max(0, ratio)) * 2) / block) * block;
-        ctx.fillRect(x - width / 2, y + yy, width, block);
-    }
-}
-
-function drawPixelOvalOutline(ctx, x, y, rx, ry, block, thickness, color) {
-    ctx.fillStyle = color;
-    for (let yy = -ry; yy <= ry; yy += block) {
-        const outerRatio = 1 - Math.pow(yy / ry, 2);
-        const innerRatio = 1 - Math.pow(yy / Math.max(1, ry - thickness), 2);
-        const outerW = Math.floor((rx * Math.sqrt(Math.max(0, outerRatio)) * 2) / block) * block;
-        const innerW = Math.floor(((rx - thickness) * Math.sqrt(Math.max(0, innerRatio)) * 2) / block) * block;
-        ctx.fillRect(x - outerW / 2, y + yy, Math.max(0, (outerW - innerW) / 2), block);
-        ctx.fillRect(x + innerW / 2, y + yy, Math.max(0, (outerW - innerW) / 2), block);
-    }
-}
-
-function drawPixelDashedOval(ctx, x, y, rx, ry) {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.48)';
-    for (let i = 0; i < 48; i += 2) {
-        const angle = (i / 48) * Math.PI * 2;
-        const px = x + Math.cos(angle) * rx;
-        const py = y + Math.sin(angle) * ry;
-        ctx.save();
-        ctx.translate(px, py);
-        ctx.rotate(angle + Math.PI / 2);
-        ctx.fillRect(-18, -3, 36, 6);
-        ctx.restore();
-    }
-}
-
-function drawPixelGrassTiles(ctx, rx, ry) {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-    for (let i = 0; i < 34; i++) {
-        const x = ((i * 137) % Math.floor(rx * 2)) - rx;
-        const y = ((i * 91) % Math.floor(ry * 2)) - ry;
-        if (Math.pow(x / rx, 2) + Math.pow(y / ry, 2) <= 1) {
-            ctx.fillRect(x, y, 10, 10);
+            // time/result
+            ctx.textAlign = 'right';
+            const t = results[row.id]?.finishTime;
+            ctx.fillText(t ? formatRaceTime(t) : 'لم ينته', px + panelW - 28, ry + 12);
         }
+
+        // Return button
+        const btnW = 140;
+        const btnH = 44;
+        const bx = px + (panelW - btnW) / 2;
+        const by = py + panelH - btnH - 20;
+        ctx.fillStyle = '#086fb6';
+        drawRoundedRectPath(ctx, bx, by, btnW, btnH, 8);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 18px Rubik';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('عودة', bx + btnW / 2, by + btnH / 2);
+
+        // store button rect in canvas coords for click handler
+        gameState.race.resultsButtonRect = { x: bx, y: by, w: btnW, h: btnH };
     }
+
+    updateRaceHud(session, localCar);
 }
 
 function drawRaceCar(car, index, isLocal, userId, participant) {
@@ -2200,6 +2972,8 @@ function drawRaceCar(car, index, isLocal, userId, participant) {
     ctx.imageSmoothingEnabled = false;
     ctx.translate(car.x, car.y);
     ctx.rotate(car.angle);
+    // Scale the car drawing down for race mode
+    ctx.scale(RACE_CAR_SCALE, RACE_CAR_SCALE);
     ctx.shadowBlur = isLocal ? 8 : 0;
     ctx.shadowColor = isLocal ? 'rgba(8, 111, 182, 0.65)' : 'transparent';
     ctx.fillStyle = color;
@@ -2290,7 +3064,7 @@ function updateRaceHud(session, car) {
     if (!hud || !lap || !time) return;
     hud.classList.remove('hidden');
     lap.textContent = `لفة ${Math.min(RACE_LAPS, car.lap || 1)} من ${RACE_LAPS}`;
-    const elapsed = Math.max(0, Date.now() - (session.startTime || Date.now()));
+    const elapsed = Math.max(0, serverNow() - (session.startTime || serverNow()));
     time.textContent = car.finished && gameState.race.session?.results?.[gameState.userId]
         ? formatRaceTime(gameState.race.session.results[gameState.userId].finishTime)
         : formatRaceTime(elapsed);
@@ -2319,13 +3093,14 @@ function drawKidnapLine() {
     ctx.beginPath();
     ctx.moveTo(laptop.x, laptop.y);
 
+    const { x: playerX, y: playerY } = getPlayerRenderPos(player);
     let targetX, targetY;
     if (gameState.anim.phase === 'reach') {
-        targetX = laptop.x + (player.x - laptop.x) * p;
-        targetY = laptop.y + (player.y - laptop.y) * p;
+        targetX = laptop.x + (playerX - laptop.x) * p;
+        targetY = laptop.y + (playerY - laptop.y) * p;
     } else {
-        targetX = player.x;
-        targetY = player.y;
+        targetX = playerX;
+        targetY = playerY;
     }
 
     ctx.lineTo(targetX, targetY);
@@ -2359,8 +3134,9 @@ function drawFocusMask(canvas) {
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
         const zoom = gameState.zoom;
-        const pScreenX = centerX + (player.x + gameState.camera.x) * zoom;
-        const pScreenY = centerY + (player.y + gameState.camera.y) * zoom;
+        const { x: playerX, y: playerY } = getPlayerRenderPos(player);
+        const pScreenX = centerX + (playerX + gameState.camera.x) * zoom;
+        const pScreenY = centerY + (playerY + gameState.camera.y) * zoom;
 
         const pRadius = (gameState.isLockedIn ? 85 : 75) * zoom;
         const pGrad = mCtx.createRadialGradient(pScreenX, pScreenY, pRadius * 0.4, pScreenX, pScreenY, pRadius);
@@ -2480,11 +3256,15 @@ function updatePomodoro() {
             const taskInput = document.getElementById('current-task-input');
             if (taskInput) taskInput.blur();
 
-            if (gameState.pomodoro.sessionsLeft <= 1) {
+            const shouldEndAfterThisTimer = gameState.pomodoro.sessionsLeft <= 1 ||
+                shouldExpirePomodoroAfterCurrentTimer(gameState.pomodoro);
+
+            if (shouldEndAfterThisTimer) {
                 // END SESSION
+                const completedTaskText = getCurrentTaskText();
                 gameState.pomodoro.active = false;
                 const updates = {};
-                updates[`pomodoro/${gameState.pomodoro.laptopId}`] = null;
+                updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
                 update(ref(database), updates);
                 gameState.pomodoro.laptopId = null;
                 if (Notification.permission === "granted") {
@@ -2496,7 +3276,7 @@ function updatePomodoro() {
                     gameState.focusAudioEngine.stopAll();
                 }
                 gameState.pomodoro.transitioning = false;
-                showSuccessModal(gameState.pomodoro.totalSessions, gameState.pomodoro.workDuration);
+                showSuccessModal(gameState.pomodoro.totalSessions, gameState.pomodoro.workDuration, completedTaskText);
             } else {
                 // GO TO BREAK
                 if (gameState.focusAudioEngine) {
@@ -2521,10 +3301,10 @@ function updatePomodoro() {
             smallTimer.classList.add('hidden');
             gameState.pomodoro.sessionsLeft--;
 
-            if (gameState.pomodoro.sessionsLeft <= 0) {
+            if (gameState.pomodoro.sessionsLeft <= 0 || shouldExpirePomodoroAfterCurrentTimer(gameState.pomodoro)) {
                 gameState.pomodoro.active = false;
                 const updates = {};
-                updates[`pomodoro/${gameState.pomodoro.laptopId}`] = null;
+                updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
                 update(ref(database), updates);
                 gameState.pomodoro.laptopId = null;
                 if (Notification.permission === "granted") {
@@ -2557,8 +3337,16 @@ function updatePomodoro() {
                 gameState.pomodoro.phase = 'wait';
 
                 const updates = {};
-                updates[`pomodoro/${gameState.pomodoro.laptopId}/phase`] = 'wait';
-                updates[`pomodoro/${gameState.pomodoro.laptopId}/endTime`] = 0;
+                updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = {
+                    claimedBy: gameState.userId,
+                    phase: 'wait',
+                    endTime: 0,
+                    workDuration: gameState.pomodoro.workDuration,
+                    breakDuration: gameState.pomodoro.breakDuration,
+                    sessionsLeft: gameState.pomodoro.sessionsLeft,
+                    totalSessions: gameState.pomodoro.totalSessions,
+                    createdAt: gameState.pomodoro.createdAt || Date.now()
+                };
                 update(ref(database), updates);
 
                 setTimeout(() => {
@@ -2572,98 +3360,128 @@ function updatePomodoro() {
     }
 }
 
+function isLaptopOwnerInGame(laptop) {
+    const owner = gameState.players[laptop.claimedBy];
+    return !!(owner && owner.activeInGame);
+}
+
+// Owner logged out while session waits for them (expired timer or between-phase wait).
+function isLaptopSessionAfk(laptop) {
+    if (!laptop.claimedBy) return false;
+    if (isLaptopOwnerInGame(laptop)) return false;
+
+    const now = Date.now();
+    if (laptop.phase === 'wait') return true;
+    if ((laptop.phase === 'work' || laptop.phase === 'break') && laptop.endTime && now >= laptop.endTime) {
+        return true;
+    }
+    return false;
+}
+
+function getLaptopBadgePosition(laptop) {
+    const player = Object.values(gameState.players).find(p => p.userId === laptop.claimedBy);
+    if (player) {
+        const { x, y } = getPlayerRenderPos(player);
+        return { x, y: y - PLAYER_SIZE / 2 - 20 };
+    }
+    return { x: laptop.x, y: laptop.y - 70 };
+}
+
+function drawPomodoroBadgeStack(ctx, renderX, renderY, { taskText, statusText, color, textColor = 'white' }) {
+    const timerH = 26;
+    const taskH = 24;
+    const gap = 4;
+
+    ctx.font = 'bold 12px Rubik';
+    const taskWidth = taskText ? ctx.measureText(taskText).width : 0;
+
+    ctx.font = 'bold 14px Rubik';
+    const statusWidth = ctx.measureText(statusText).width;
+
+    const totalHeight = taskText ? (taskH + gap + timerH) : timerH;
+    const startY = renderY - (totalHeight - timerH);
+
+    const drawRoundedRect = (x, y, w, h, r) => {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.fill();
+    };
+
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.fillStyle = color;
+
+    if (taskText) {
+        const bx = renderX - taskWidth / 2 - 12;
+        drawRoundedRect(bx, startY, taskWidth + 24, taskH, 12);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = textColor;
+        ctx.font = 'bold 12px Rubik';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(taskText, renderX, startY + taskH / 2);
+
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.fillStyle = color;
+    }
+
+    const statusY = taskText ? startY + taskH + gap : startY;
+    const bx = renderX - statusWidth / 2 - 12;
+    drawRoundedRect(bx, statusY, statusWidth + 24, timerH, 13);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 14px Rubik';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(statusText, renderX, statusY + timerH / 2);
+    ctx.textBaseline = 'alphabetic';
+}
+
 function drawTimers() {
     const ctx = gameState.ctx;
     const now = Date.now();
 
     gameState.laptops.forEach(laptop => {
-        if (!laptop.claimedBy || laptop.claimedBy === gameState.userId) return; // Only draw for others
-        if (laptop.phase !== 'work' && laptop.phase !== 'break') return; // Don't draw if not in valid phase
+        if (!laptop.claimedBy || laptop.claimedBy === gameState.userId) return;
+
+        const player = Object.values(gameState.players).find(p => p.userId === laptop.claimedBy);
+        const { x: renderX, y: renderY } = getLaptopBadgePosition(laptop);
+        const taskText = (player && player.currentTask) ? `أعمل على ${player.currentTask}` : '';
+
+        if (isLaptopSessionAfk(laptop)) {
+            drawPomodoroBadgeStack(ctx, renderX, renderY, {
+                taskText,
+                statusText: 'AFK',
+                color: COLORS.afk,
+                textColor: COLORS.black
+            });
+            return;
+        }
+
+        if (laptop.phase !== 'work' && laptop.phase !== 'break') return;
 
         const remaining = Math.max(0, laptop.endTime - now);
-
-        // Hide if stuck on 00:00 for more than a few seconds (e.g., owner logged out or lagged)
-        if (remaining === 0 && now - laptop.endTime > 5000) return;
-
         const mins = Math.floor(remaining / 60000);
         const secs = Math.floor((remaining % 60000) / 1000);
         const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        const phaseColor = laptop.phase === 'work' ? COLORS.red : '#3bb9ab';
 
-        // Use a rounded rectangle instead of a blocky one for the background
-        const textWidth = ctx.measureText(timeStr).width;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-
-        ctx.fillStyle = laptop.phase === 'work' ? COLORS.red : '#3bb9ab';
-
-        let renderY = laptop.y - 70;
-        let renderX = laptop.x;
-        const player = Object.values(gameState.players).find(p => p.userId === laptop.claimedBy);
-        if (player) {
-            renderX = player.x;
-            renderY = player.y - PLAYER_SIZE / 2 - 20;
-        }
-
-        const taskText = (player && player.currentTask) ? `أعمل على ${player.currentTask}` : '';
-
-        ctx.font = 'bold 12px Rubik';
-        const taskWidth = taskText ? ctx.measureText(taskText).width : 0;
-
-        ctx.font = 'bold 14px Rubik';
-        const timerWidth = ctx.measureText(timeStr).width;
-
-        const timerH = 26;
-        const taskH = 24;
-        const gap = 4;
-
-        const totalHeight = taskText ? (taskH + gap + timerH) : timerH;
-        const startY = renderY - (totalHeight - timerH);
-
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.fillStyle = laptop.phase === 'work' ? COLORS.red : '#3bb9ab';
-
-        const drawRoundedRect = (x, y, w, h, r) => {
-            ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.lineTo(x + w - r, y);
-            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-            ctx.lineTo(x + w, y + h - r);
-            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-            ctx.lineTo(x + r, y + h);
-            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-            ctx.lineTo(x, y + r);
-            ctx.quadraticCurveTo(x, y, x + r, y);
-            ctx.fill();
-        };
-
-        if (taskText) {
-            const bx = renderX - taskWidth/2 - 12;
-            drawRoundedRect(bx, startY, taskWidth + 24, taskH, 12);
-
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 12px Rubik';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(taskText, renderX, startY + taskH / 2);
-
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = 'rgba(0,0,0,0.5)';
-            ctx.fillStyle = laptop.phase === 'work' ? COLORS.red : '#3bb9ab';
-        }
-
-        const timerY = taskText ? startY + taskH + gap : startY;
-        const bx = renderX - timerWidth/2 - 12;
-        drawRoundedRect(bx, timerY, timerWidth + 24, timerH, 13);
-
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 14px Rubik';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(timeStr, renderX, timerY + timerH / 2);
-        ctx.textBaseline = 'alphabetic';
+        drawPomodoroBadgeStack(ctx, renderX, renderY, {
+            taskText,
+            statusText: timeStr,
+            color: phaseColor
+        });
     });
 }
 
@@ -2671,9 +3489,10 @@ function drawLockedInOverlay() {
     const ctx = gameState.ctx;
     const player = gameState.players[gameState.userId];
     if (!player) return;
+    const { x, y } = getPlayerRenderPos(player);
     ctx.fillStyle = 'rgba(8, 111, 182, 0.3)';
     ctx.beginPath();
-    ctx.arc(player.x, player.y, PLAYER_SIZE / 2 + 10, 0, Math.PI * 2);
+    ctx.arc(x, y, PLAYER_SIZE / 2 + 10, 0, Math.PI * 2);
     ctx.fill();
 }
 
@@ -2760,8 +3579,10 @@ function drawConnections() {
                 for (let j = i + 1; j < players.length; j++) {
                     const p1 = players[i], p2 = players[j];
                     ctx.beginPath();
-                    ctx.moveTo(p1.x, p1.y);
-                    ctx.lineTo(p2.x, p2.y);
+                    const pos1 = getPlayerRenderPos(p1);
+                    const pos2 = getPlayerRenderPos(p2);
+                    ctx.moveTo(pos1.x, pos1.y);
+                    ctx.lineTo(pos2.x, pos2.y);
                     ctx.stroke();
                 }
             }
@@ -2770,18 +3591,38 @@ function drawConnections() {
     ctx.setLineDash([]);
 }
 
+function blendHexColors(fromHex, toHex, t) {
+    const clamp = Math.max(0, Math.min(1, t));
+    const parse = (hex) => {
+        const value = hex.replace('#', '');
+        return [
+            parseInt(value.slice(0, 2), 16),
+            parseInt(value.slice(2, 4), 16),
+            parseInt(value.slice(4, 6), 16)
+        ];
+    };
+    const [r1, g1, b1] = parse(fromHex);
+    const [r2, g2, b2] = parse(toHex);
+    const r = Math.round(r1 + (r2 - r1) * clamp);
+    const g = Math.round(g1 + (g2 - g1) * clamp);
+    const b = Math.round(b1 + (b2 - b1) * clamp);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
 function drawPlayers(onlyLocal = false) {
     const ctx = gameState.ctx;
     for (const player of Object.values(gameState.players)) {
         const isCurrentUser = player.userId === gameState.userId;
         if (onlyLocal && !isCurrentUser) continue;
 
-        const screenX = player.x;
-        const screenY = player.y - (player.bobOffset || 0);
+        const { x: screenX, y: renderY } = getPlayerRenderPos(player);
+        const screenY = renderY - (player.bobOffset || 0);
 
         const isWorking = isCurrentUser ?
             (gameState.isLockedIn && gameState.pomodoro.active && gameState.pomodoro.phase === 'work') :
             player.isWorking;
+
+        const shouldGrayWorld = !isCurrentUser && !!player.isWorking;
 
         let workBob = 0;
         let workAngle = 0;
@@ -2796,17 +3637,29 @@ function drawPlayers(onlyLocal = false) {
             workScaleX = 1.0 - Math.sin(workT) * 0.04;
         }
 
+        const colorAlpha = isCurrentUser ? 1 : (player.avatarColorAlpha ?? 0);
+        const grayMix = 1 - colorAlpha;
+        const ringColor = isCurrentUser ? COLORS.blue : '#ffffff';
+        const mutedRing = '#8a8a8a';
+
         ctx.save();
         ctx.translate(screenX, screenY + workBob);
         ctx.rotate(workAngle);
         ctx.scale(workScaleX, workScaleY);
+
+        if (grayMix > 0.01) {
+            ctx.filter = `saturate(${colorAlpha}) brightness(${0.72 + 0.28 * colorAlpha})`;
+            ctx.globalAlpha = 0.55 + 0.45 * colorAlpha;
+        }
 
         ctx.shadowBlur = 10;
         ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
         ctx.shadowOffsetY = 4 + (player.bobOffset || 0);
         ctx.beginPath();
         ctx.arc(0, 0, (PLAYER_SIZE / 2) + 4, 0, Math.PI * 2);
-        ctx.fillStyle = isCurrentUser ? COLORS.blue : '#ffffff';
+        ctx.fillStyle = grayMix > 0.01
+            ? blendHexColors(ringColor, mutedRing, grayMix)
+            : ringColor;
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.shadowOffsetY = 0;
@@ -2818,24 +3671,33 @@ function drawPlayers(onlyLocal = false) {
 
         const img = gameState.avatarCache[player.userId];
         if (img && img !== 'failed') {
+            if (shouldGrayWorld) ctx.filter = 'grayscale(60%)';
             ctx.drawImage(img, -PLAYER_SIZE / 2, -PLAYER_SIZE / 2, PLAYER_SIZE, PLAYER_SIZE);
+            ctx.filter = 'none';
         } else {
-            ctx.fillStyle = isCurrentUser ? COLORS.blue : '#ccc';
+            const placeholderColor = isCurrentUser ? COLORS.blue : '#ccc';
+            let fillColor = placeholderColor;
+            if (!isCurrentUser && player.isWorking) fillColor = '#9a9a9a';
+            ctx.fillStyle = grayMix > 0.01
+                ? blendHexColors(fillColor, '#9a9a9a', grayMix)
+                : fillColor;
             ctx.fill();
-            ctx.fillStyle = 'white';
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.55 + 0.45 * colorAlpha})`;
             ctx.font = 'bold 24px Rubik';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(player.username.charAt(0).toUpperCase(), 0, 0);
         }
         ctx.restore();
+        ctx.filter = 'none';
+        ctx.globalAlpha = 1;
         ctx.restore(); // restores translate, rotate, scale
 
         if (player.nameAlpha > 0.01) {
             ctx.fillStyle = `rgba(255, 255, 255, ${player.nameAlpha})`;
             ctx.font = '500 14px Rubik';
             ctx.textAlign = 'center';
-            ctx.fillText(player.username, screenX, player.y + PLAYER_SIZE / 2 + 25);
+            ctx.fillText(player.username, screenX, renderY + PLAYER_SIZE / 2 + 25);
         }
     }
 }
