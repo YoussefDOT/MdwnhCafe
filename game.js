@@ -558,7 +558,14 @@ class FocusYouTubePlayer {
             const titleEl = document.getElementById('mini-yt-title');
             if (slider && dur > 0) slider.value = Math.max(0, Math.min(100, Math.round((cur / dur) * 100)));
             if (timeEl) timeEl.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
-            if (titleEl && this.videoId) titleEl.textContent = `YouTube • ${this.videoId}`;
+            if (titleEl) {
+                try {
+                    const data = this.player.getVideoData();
+                    titleEl.textContent = data?.title ? data.title : `YouTube • ${this.videoId}`;
+                } catch(e) {
+                    titleEl.textContent = `YouTube • ${this.videoId}`;
+                }
+            }
             // persist timestamp occasionally
             if (gameState.userId && (Math.floor(cur) % 5 === 0)) {
                 update(ref(database), { [`users/${gameState.userId}/focusPlayer/timestamp`]: Math.floor(cur) });
