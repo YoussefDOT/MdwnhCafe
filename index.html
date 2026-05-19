@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مدونة ستوديو | مساحة العمل الرقمية</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <!-- شاشة اختيار الصالة: الإخوة أو الاخوات -->
     <div id="lobby-screen" class="screen active">
@@ -29,13 +31,13 @@
             </div>
             <h2 class="title">اختر هويتك</h2>
             <p class="subtitle">انقر على صورتك للدخول إلى مساحة العمل الرقمية</p>
-            
+
             <div id="user-list" class="user-list">
                 <div class="loading-users">
                     <p>جاري تحميل قائمة المستخدمين المتصلين...</p>
                 </div>
             </div>
-            
+
             <p class="error-msg" id="error-msg"></p>
         </div>
     </div>
@@ -45,7 +47,7 @@
         <div class="modal-content">
             <h3>تأكيد الدخول</h3>
             <p>هل أنت متأكد من الدخول بهذه الهوية؟</p>
-            
+
             <div class="confirm-user-info">
                 <img id="confirm-avatar" src="" alt="Avatar">
                 <div class="details">
@@ -53,7 +55,7 @@
                     <span id="confirm-channel"></span>
                 </div>
             </div>
-            
+
             <div class="modal-actions">
                 <button id="modal-confirm" class="btn-primary">نعم، أدخل الآن</button>
                 <button id="modal-cancel" class="btn-secondary">إلغاء</button>
@@ -73,7 +75,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="hud-left">
                 <span id="player-count" class="player-stat">0 مستخدمين</span>
                 <button id="logout-btn" class="logout-btn">خروج</button>
@@ -104,7 +106,7 @@
                 <img src="logo.png" alt="مدونة ستوديو Logo">
             </div>
             <h2 class="title" style="font-size: 44px; font-weight: 800; margin-bottom: 20px; color: white;">مستعد؟</h2>
-            
+
             <div class="pomodoro-settings">
                 <div class="setting-group">
                     <label>عدد دقائق العمل</label>
@@ -115,7 +117,7 @@
                         <input type="number" class="custom-input" id="custom-work" placeholder="مخصص" min="1">
                     </div>
                 </div>
-                
+
                 <div class="setting-group">
                     <label>دقائق الراحة</label>
                     <div class="options" id="break-options">
@@ -125,7 +127,7 @@
                         <input type="number" class="custom-input" id="custom-break" placeholder="مخصص" min="1">
                     </div>
                 </div>
-                
+
                 <div class="setting-group">
                     <label>عدد الجلسات</label>
                     <div class="options" id="session-options">
@@ -136,145 +138,177 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="modal-actions" style="margin-top: 30px;">
-                <button id="pomodoro-confirm" class="btn-primary" style="width: 100%; font-size: 20px; padding: 15px;">أنا لها</button>
-            </div>
-            <button id="pomodoro-cancel" class="btn-secondary pomodoro-back-btn">رجوع</button>
-            <button id="pomodoro-test" class="btn-cancel" style="margin-top: 5px; background: none; border: none; color: #aaa; cursor: pointer; text-decoration: underline;">وضع الاختبار (10ث عمل، 3د راحة، 3 جلسات)</button>
-        </div>
-    </div>
-
-    <!-- لوحة سباق الاستراحة -->
-    <div id="race-panel" class="race-panel hidden">
-        <div class="race-card">
-            <div class="race-kicker">لعبة الاستراحة</div>
-            <h2 id="race-title">سباق السيارات</h2>
-            <div id="race-player-list" class="race-player-list"></div>
-            <div id="race-status" class="race-status"></div>
-            <div class="race-actions">
-                <button id="race-start" class="btn-primary">ابدأ السباق</button>
-                <button id="race-return" class="btn-secondary">عودة</button>
+                <button id="pomodoro-confirm" class="btn-primary"
+                    style="width: 100%; font-size: 20px; padding: 15px;">أنا لها</button>
+                <button id="pomodoro-cancel" class="btn-secondary pomodoro-back-btn">رجوع</button>
+                <button id="pomodoro-test" class="btn-cancel"
+                    style="margin-top: 5px; background: none; border: none; color: #aaa; cursor: pointer; text-decoration: underline;">وضع
+                    الاختبار (10ث عمل، 10ث راحة، 3 جلسات)</button>
             </div>
         </div>
-    </div>
 
-    <div id="race-hud" class="race-hud hidden">
-        <span id="race-lap">لفة 1 من 3</span>
-        <span id="race-time">00:00.000</span>
-    </div>
-
-    <!-- نافذة الإنجاز (أحسنتم) -->
-    <div id="success-modal" class="modal-overlay">
-        <div class="modal-content success-content" style="text-align: center; max-width: 400px; padding: 40px 30px;">
-            <div id="success-avatar" style="width: 100px; height: 100px; border-radius: 50%; background: #eee; margin: 0 auto 20px; border: 4px solid var(--clr-blue); overflow: hidden; display: flex; align-items: center; justify-content: center;">
-                <img id="success-avatar-img" src="" style="width: 100%; height: 100%; object-fit: cover; display: none;">
-                <div id="success-avatar-text" style="font-size: 40px; font-weight: bold; color: white;"></div>
-            </div>
-            <h2 id="success-name" style="font-size: 24px; font-weight: 700; margin-bottom: 5px;">-</h2>
-            <h1 class="title" style="font-size: 48px; font-weight: 800; color: var(--clr-carmine); margin-bottom: 10px;">أحسنتم!</h1>
-            <h3 style="font-size: 20px; font-weight: 600; color: #555; margin-bottom: 25px;">جزيتم خيرًا</h3>
-            
-            <div style="background: #f8f8f8; border-radius: 12px; padding: 15px; margin-bottom: 25px;">
-                <div style="font-size: 16px; color: #666; margin-bottom: 5px;">إجمالي وقت العمل</div>
-                <div id="success-total-time" style="font-size: 28px; font-weight: 800; color: var(--clr-raisin);">0 دقيقة</div>
-                <div style="font-size: 14px; color: #888; margin-top: 5px;"><span id="success-sessions-count">0</span> جلسات</div>
-            </div>
-            <div id="success-task" class="success-task" style="display: none;"></div>
-            
-            <p style="font-size: 16px; color: #888; margin-bottom: 25px; line-height: 1.5;">قم بالتقاط الشاشة وارسالها في التوثيق</p>
-            
-            <button id="success-close" class="btn-primary" style="width: 100%; font-size: 18px; padding: 12px;">إغلاق</button>
-        </div>
-    </div>
-
-    <!-- لوحة المهمة الحالية -->
-    <div id="current-task-panel" class="current-task-panel">
-        <div style="color: rgba(255, 255, 255, 0.8); font-size: 14px; font-weight: 600;">أعمل على:</div>
-        <input type="text" id="current-task-input" placeholder="اكتب المهمة هنا..." autocomplete="off">
-    </div>
-
-    <!-- لوحة أصوات التركيز -->
-    <div id="focus-sounds-panel" class="focus-sounds-panel">
-        <div class="panel-header-row">
-            <div class="panel-header">أصوات التركيز 🎧</div>
-            <div class="overall-vol-container">
-                <span class="overall-vol-label">الصوت العام</span>
-                <input type="range" id="overall-vol" class="overall-vol-slider" min="0" max="1" step="0.05" value="0.5">
+        <!-- لوحة سباق الاستراحة -->
+        <div id="race-panel" class="race-panel hidden">
+            <div class="race-card">
+                <div class="race-kicker">لعبة الاستراحة</div>
+                <h2 id="race-title">سباق السيارات</h2>
+                <div id="race-player-list" class="race-player-list"></div>
+                <div id="race-status" class="race-status"></div>
+                <div class="race-actions">
+                    <button id="race-start" class="btn-primary">ابدأ السباق</button>
+                    <button id="race-return" class="btn-secondary">عودة</button>
+                </div>
             </div>
         </div>
-        <div class="sound-controls">
-            <!-- Plane -->
-            <div class="sound-item" data-sound="plane">
-                <button class="sound-toggle-btn" title="طائرة">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3.5c-.5-.5-2.5 0-4 1.5L13.5 8.5l-8.2-1.8c-.9-.2-1.8.1-2.4.7l-.5.5c-.4.4-.3 1 .1 1.3l6.3 3.8-3.8 3.8-2.3-.5c-.6-.1-1.2.1-1.5.6l-.3.3c-.3.3-.2.8.2.9L5 20l.9 3.9c.1.4.6.5.9.2l.3-.3c.5-.3.7-.9.6-1.5l-.5-2.3 3.8-3.8 3.8 6.3c.3.4.9.5 1.3.1l.5-.5c.6-.6.9-1.5.7-2.4z"/></svg>
-                </button>
-                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
-            </div>
-            <!-- Rain Muffled -->
-            <div class="sound-item" data-sound="rain_muffled">
-                <button class="sound-toggle-btn" title="مطر خافت">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><line x1="12" y1="16" x2="12" y2="22"/><path d="M8 18c0-2 2-3 4-3s4 1 4 3"/></svg>
-                </button>
-                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
-            </div>
-            <!-- White Noise Muffled -->
-            <div class="sound-item" data-sound="white_muffled">
-                <button class="sound-toggle-btn" title="ضوضاء بيضاء خافتة">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M2 16h20M2 8h20"/></svg>
-                </button>
-                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
-            </div>
-            <!-- Brown Noise Muffled -->
-            <div class="sound-item" data-sound="brown_muffled">
-                <button class="sound-toggle-btn" title="ضوضاء بنية خافتة">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M6 14h12M9 18h6M1 6h22"/></svg>
-                </button>
-                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
-            </div>
-            <!-- Wind -->
-            <div class="sound-item" data-sound="wind">
-                <button class="sound-toggle-btn" title="رياح">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>
-                </button>
-                <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+
+        <div id="race-hud" class="race-hud hidden">
+            <span id="race-lap">لفة 1 من 3</span>
+            <span id="race-time">00:00.000</span>
+        </div>
+
+        <!-- نافذة الإنجاز (أحسنتم) -->
+        <div id="success-modal" class="modal-overlay">
+            <div class="modal-content success-content"
+                style="text-align: center; max-width: 400px; padding: 40px 30px;">
+                <div id="success-avatar"
+                    style="width: 100px; height: 100px; border-radius: 50%; background: #eee; margin: 0 auto 20px; border: 4px solid var(--clr-blue); overflow: hidden; display: flex; align-items: center; justify-content: center;">
+                    <img id="success-avatar-img" src=""
+                        style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                    <div id="success-avatar-text" style="font-size: 40px; font-weight: bold; color: white;"></div>
+                </div>
+                <h2 id="success-name" style="font-size: 24px; font-weight: 700; margin-bottom: 5px;">-</h2>
+                <h1 class="title"
+                    style="font-size: 48px; font-weight: 800; color: var(--clr-carmine); margin-bottom: 10px;">أحسنتم!
+                </h1>
+                <h3 style="font-size: 20px; font-weight: 600; color: #555; margin-bottom: 25px;">جزيتم خيرًا</h3>
+
+                <div style="background: #f8f8f8; border-radius: 12px; padding: 15px; margin-bottom: 25px;">
+                    <div style="font-size: 16px; color: #666; margin-bottom: 5px;">إجمالي وقت العمل</div>
+                    <div id="success-total-time" style="font-size: 28px; font-weight: 800; color: var(--clr-raisin);">0
+                        دقيقة</div>
+                    <div style="font-size: 14px; color: #888; margin-top: 5px;"><span
+                            id="success-sessions-count">0</span> جلسات</div>
+                </div>
+                <div id="success-task" class="success-task" style="display: none;"></div>
+
+                <p style="font-size: 16px; color: #888; margin-bottom: 25px; line-height: 1.5;">قم بالتقاط الشاشة
+                    وارسالها في التوثيق</p>
+
+                <button id="success-close" class="btn-primary"
+                    style="width: 100%; font-size: 18px; padding: 12px;">إغلاق</button>
             </div>
         </div>
-        <!-- YouTube Focus Player -->
-        <div id="yt-focus-block" class="yt-focus-block">
-            <div class="yt-input-section">
-                <input type="text" id="yt-url-input" placeholder="أدخل رابط YouTube هنا" autocomplete="off">
-                <button id="yt-load-btn">تحميل</button>
+
+        <!-- لوحة المهمة الحالية -->
+        <div id="current-task-panel" class="current-task-panel">
+            <div style="color: rgba(255, 255, 255, 0.8); font-size: 14px; font-weight: 600;">أعمل على:</div>
+            <input type="text" id="current-task-input" placeholder="اكتب المهمة هنا..." autocomplete="off">
+        </div>
+
+        <!-- لوحة أصوات التركيز -->
+        <div id="focus-sounds-panel" class="focus-sounds-panel">
+            <div class="panel-header-row">
+                <div class="panel-header">أصوات التركيز 🎧</div>
+                <div class="overall-vol-container">
+                    <span class="overall-vol-label">الصوت العام</span>
+                    <input type="range" id="overall-vol" class="overall-vol-slider" min="0" max="1" step="0.05"
+                        value="0.5">
+                </div>
             </div>
-            <div id="mini-yt-player" class="mini-yt-player">
-                <div class="yt-player-ui">
-                    <img id="mini-yt-cover" src="" alt="cover" class="yt-thumbnail">
-                    <div class="yt-controls-col">
-                        <div id="mini-yt-title" class="yt-title">---</div>
-                        <div class="yt-playback-controls">
-                            <button id="mini-yt-back10" class="yt-btn" title="رجوع 10s">⏪10</button>
-                            <button id="mini-yt-play" class="yt-btn" title="تشغيل">▶</button>
-                            <button id="mini-yt-pause" class="yt-btn" title="إيقاف" style="display:none;">⏸</button>
-                            <button id="mini-yt-forward10" class="yt-btn" title="تقديم 10s">10⏩</button>
-                            <label class="yt-loop-label"><input type="checkbox" id="mini-yt-loop"> تكرار</label>
-                        </div>
-                        <div class="yt-progress-container">
-                            <span id="mini-yt-time">00:00 / 00:00</span>
-                            <input type="range" id="mini-yt-slider" min="0" max="100" value="0">
-                        </div>
-                        <div class="yt-volume-section">
-                            <span class="yt-vol-icon">🔊</span>
-                            <input type="range" id="yt-volume-slider" min="0" max="100" value="80">
+            <div class="sound-controls">
+                <!-- Plane -->
+                <div class="sound-item" data-sound="plane">
+                    <button class="sound-toggle-btn" title="طائرة">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path
+                                d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3.5c-.5-.5-2.5 0-4 1.5L13.5 8.5l-8.2-1.8c-.9-.2-1.8.1-2.4.7l-.5.5c-.4.4-.3 1 .1 1.3l6.3 3.8-3.8 3.8-2.3-.5c-.6-.1-1.2.1-1.5.6l-.3.3c-.3.3-.2.8.2.9L5 20l.9 3.9c.1.4.6.5.9.2l.3-.3c.5-.3.7-.9.6-1.5l-.5-2.3 3.8-3.8 3.8 6.3c.3.4.9.5 1.3.1l.5-.5c.6-.6.9-1.5.7-2.4z" />
+                        </svg>
+                    </button>
+                    <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <!-- Rain Muffled -->
+                <div class="sound-item" data-sound="rain_muffled">
+                    <button class="sound-toggle-btn" title="مطر خافت">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25" />
+                            <line x1="12" y1="16" x2="12" y2="22" />
+                            <path d="M8 18c0-2 2-3 4-3s4 1 4 3" />
+                        </svg>
+                    </button>
+                    <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <!-- White Noise Muffled -->
+                <div class="sound-item" data-sound="white_muffled">
+                    <button class="sound-toggle-btn" title="ضوضاء بيضاء خافتة">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 12h20M2 16h20M2 8h20" />
+                        </svg>
+                    </button>
+                    <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <!-- Brown Noise Muffled -->
+                <div class="sound-item" data-sound="brown_muffled">
+                    <button class="sound-toggle-btn" title="ضوضاء بنية خافتة">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 10h18M6 14h12M9 18h6M1 6h22" />
+                        </svg>
+                    </button>
+                    <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <!-- Wind -->
+                <div class="sound-item" data-sound="wind">
+                    <button class="sound-toggle-btn" title="رياح">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path
+                                d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2" />
+                        </svg>
+                    </button>
+                    <input type="range" class="sound-vol" min="0" max="1" step="0.05" value="0.5">
+                </div>
+            </div>
+            <!-- YouTube Focus Player -->
+            <div id="yt-focus-block" class="yt-focus-block">
+                <div class="yt-input-section">
+                    <input type="text" id="yt-url-input" placeholder="أدخل رابط YouTube هنا" autocomplete="off">
+                    <button id="yt-load-btn">تحميل</button>
+                </div>
+                <div id="mini-yt-player" class="mini-yt-player">
+                    <div class="yt-player-ui">
+                        <img id="mini-yt-cover" src="" alt="cover" class="yt-thumbnail">
+                        <div class="yt-controls-col">
+                            <div id="mini-yt-title" class="yt-title">---</div>
+                            <div class="yt-playback-controls">
+                                <button id="mini-yt-back10" class="yt-btn" title="رجوع 10s">⏪10</button>
+                                <button id="mini-yt-play" class="yt-btn" title="تشغيل">▶</button>
+                                <button id="mini-yt-pause" class="yt-btn" title="إيقاف" style="display:none;">⏸</button>
+                                <button id="mini-yt-forward10" class="yt-btn" title="تقديم 10s">10⏩</button>
+                                <label class="yt-loop-label"><input type="checkbox" id="mini-yt-loop"> تكرار</label>
+                            </div>
+                            <div class="yt-progress-container">
+                                <span id="mini-yt-time">00:00 / 00:00</span>
+                                <input type="range" id="mini-yt-slider" min="0" max="100" value="0">
+                            </div>
+                            <div class="yt-volume-section">
+                                <span class="yt-vol-icon">🔊</span>
+                                <input type="range" id="yt-volume-slider" min="0" max="100" value="80">
+                            </div>
                         </div>
                     </div>
                 </div>
+                <div id="yt-iframe-container" style="display:none;"></div>
             </div>
-            <div id="yt-iframe-container" style="display:none;"></div>
         </div>
-    </div>
 
-    <!-- البرمجيات -->
-    <script type="module" src="firebase-config.js"></script>
-    <script type="module" src="game.js"></script>
+        <!-- البرمجيات -->
+        <script type="module" src="firebase-config.js"></script>
+        <script type="module" src="game.js"></script>
 </body>
+
 </html>
