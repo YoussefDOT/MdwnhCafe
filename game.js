@@ -425,6 +425,7 @@ class FocusYouTubePlayer {
         this.ui = {};
         this.volume = 80; // 0-100 for YT
         this._ytReady = this._ensureApiLoaded();
+        this._fading = false;
     }
 
     _ensureApiLoaded() {
@@ -496,6 +497,7 @@ class FocusYouTubePlayer {
     async resume() {
         await this._ytReady;
         if (!this.player) return;
+        this._fading = false;
         try { this.player.playVideo(); this._startPoll(); } catch(e){}
     }
 
@@ -526,7 +528,8 @@ class FocusYouTubePlayer {
     setVolumePercent(pct) { this.volume = Math.max(0, Math.min(100, Math.round(pct))); if (this.player && this.ready) this.player.setVolume(this.volume); }
 
     async fadeOutAndPause(duration = 1500) {
-        if (!this.player) return;
+        if (!this.player || this._fading) return;
+        this._fading = true;
         const steps = 12;
         const initial = this.volume;
         const stepTime = duration / steps;
@@ -538,6 +541,7 @@ class FocusYouTubePlayer {
         try { this.player.pauseVideo(); } catch(e){}
         this._stopPoll();
         if (this.player) this.player.setVolume(initial);
+        this._fading = false;
     }
 
     _startPoll() {
@@ -2443,7 +2447,9 @@ function startPomodoroPhase(phase) {
             }
             if (gameState.focusYTPlayer) {
                 gameState.focusYTPlayer.setVolumePercent(Math.round(gameState.focusAudioEngine.overallVolume * 100));
-                gameState.focusYTPlayer.resume();
+                if (gameState.isLockedIn) {
+                    gameState.focusYTPlayer.resume();
+                }
             }
         }
     }
@@ -3499,8 +3505,30 @@ function drawPrompt(laptop) {
     ctx.shadowBlur = 0;
 }
 
+function enforceAudioFailsafe() {
+    if (gameState.isLockedIn) return;
+    const yt = gameState.focusYTPlayer;
+    if (yt && yt.player && yt.ready && yt.videoId && !yt._fading) {
+        try {
+            const state = yt.player.getPlayerState();
+            if (state === 1 || state === 3) {
+                yt.fadeOutAndPause(800);
+            }
+        } catch(e) {}
+    }
+    const ae = gameState.focusAudioEngine;
+    if (ae && ae.masterGain) {
+        try {
+            if (ae.masterGain.gain.value > 0.01) {
+                ae.fadeToMaster(0, 0.5);
+            }
+        } catch(e) {}
+    }
+}
+
 function updatePomodoro() {
     if (!gameState.pomodoro.active) return;
+    enforceAudioFailsafe();
 
     const now = Date.now();
     const remaining = Math.max(0, gameState.pomodoro.endTime - now);
