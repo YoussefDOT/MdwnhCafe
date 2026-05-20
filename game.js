@@ -843,6 +843,22 @@ const gameState = {
         breakDuration: 5,
         totalSessions: 1,
         createdAt: 0
+    },
+    // Shared Pomodoro State
+    sharedPomo: {
+        phase: 'idle',          // 'idle' | 'gathering' | 'guest-waiting' | 'active'
+        isHost: false,
+        sessionId: null,        // hostId of the active shared session
+        session: null,          // latest session snapshot from Firebase
+        activeGroupMembers: [], // uids of group members (kept after Firebase cleanup)
+        nearbyPlayers: [],      // players within proximity radius
+        nearbyPlayerIds: '',    // stringified ids — used to detect changes cheaply
+        pendingInvite: null,    // { fromId, fromName, fromAvatar, sessionId, sentAt }
+        agreedEndTime: 0,       // synced endTime set by host, consumed by startPomodoroPhase
+        toastInterval: null,
+        toastTimeout: null,
+        unsubInvite: null,
+        unsubSession: null,
     }
 };
 
@@ -1863,6 +1879,13 @@ function startGame(userData) {
     listenToPomodoro();
     listenToRace();
     listenToCoffee();
+    initSharedPomo();
+    // Show offline indicator when Firebase connection is lost
+    onValue(ref(database, '.info/connected'), (snap) => {
+        const indicator = document.getElementById('offline-indicator');
+        if (indicator) indicator.classList.toggle('hidden', snap.val() === true);
+    });
+
     // Track server time offset so race start/countdown is synchronized across clients
     const offsetRef = ref(database, '.info/serverTimeOffset');
     onValue(offsetRef, (snap) => {
@@ -2041,7 +2064,8 @@ function setupControls() {
         }
         if (!gameState.race.showResultsInGame && gameState.coffee && gameState.coffee.showResultsInGame) {
             const cbtn = gameState.coffee.resultsButtonRect;
-            if (cbtn && cx >= cbtn.x && cx <= cbtn.x + cbtn.w && cy >= cbtn.y && cy <= cbtn.y + cbtn.h) {
+            const pad = isMobile() ? 10 : 0; // larger tap target on mobile
+            if (cbtn && cx >= cbtn.x - pad && cx <= cbtn.x + cbtn.w + pad && cy >= cbtn.y - pad && cy <= cbtn.y + cbtn.h + pad) {
                 returnFromCoffee(true);
             }
         }
@@ -2548,7 +2572,7 @@ function initMobileControls() {
             gameState.raceButtons[key] = val;
             btn.classList.toggle('pressed', val);
         };
-        btn.addEventListener('touchstart', (e) => { e.preventDefault(); setPressed(true); }, { passive: false });
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); setPressed(true); if (navigator.vibrate) navigator.vibrate(18); }, { passive: false });
         btn.addEventListener('touchend', (e) => { e.preventDefault(); setPressed(false); }, { passive: false });
         btn.addEventListener('touchcancel', () => setPressed(false));
     };
@@ -3117,7 +3141,9 @@ function setupTestModeUI() {
         const sessions = Math.max(1, getNum('test-sessions', 3));
 
         const workMins = workH * 60 + workM + workS / 60;
-        const breakMins = breakH * 60 + breakM + breakS / 60;
+        const rawBreakMins = breakH * 60 + breakM + breakS / 60;
+        // Enforce minimum 5-second break when a break is configured, to prevent instant-fire confusion
+        const breakMins = rawBreakMins > 0 ? Math.max(5 / 60, rawBreakMins) : 0;
         if (workMins <= 0) return;
 
         modal.classList.remove('active');
@@ -3204,7 +3230,13 @@ function startPomodoroPhase(phase) {
     gameState.pomodoro.phase = phase;
     gameState.pomodoro.transitioning = false;
     const duration = phase === 'work' ? gameState.pomodoro.workDuration : gameState.pomodoro.breakDuration;
-    gameState.pomodoro.endTime = Date.now() + duration * 60000;
+    // Shared pomodoro: use host-agreed endTime for perfect sync across clients
+    if (phase === 'work' && gameState.sharedPomo.agreedEndTime) {
+        gameState.pomodoro.endTime = gameState.sharedPomo.agreedEndTime;
+        gameState.sharedPomo.agreedEndTime = 0;
+    } else {
+        gameState.pomodoro.endTime = Date.now() + duration * 60000;
+    }
 
     if (gameState.pomodoro.laptopId !== null) {
         const updates = {};
@@ -3232,12 +3264,20 @@ function startPomodoroPhase(phase) {
         }
         // Ensure focus panel isn't blocking the joystick on mobile
         const breakPanel = document.getElementById('focus-sounds-panel');
-        if (breakPanel) breakPanel.classList.remove('active');
+        if (breakPanel) {
+            // Remember whether the drawer was open so we can restore it when work resumes
+            gameState._drawerWasOpen = breakPanel.classList.contains('drawer-open');
+            breakPanel.classList.remove('active');
+        }
         setMobileFocusMode(false);
     } else if (phase === 'work') {
         setMobileFocusMode(true);
         const panel = document.getElementById('focus-sounds-panel');
-        if (panel) panel.classList.add('active');
+        if (panel) {
+            panel.classList.add('active');
+            // Restore drawer open state from before the break
+            if (gameState._drawerWasOpen) panel.classList.add('drawer-open');
+        }
         const taskPanel = document.getElementById('current-task-panel');
         if (taskPanel) taskPanel.classList.add('active');
 
@@ -3285,32 +3325,47 @@ function listenToPomodoro() {
     });
 }
 
-function setupLogout() {
-    document.getElementById('logout-btn').addEventListener('click', () => {
-        if (gameState.userId) {
-            if (gameState.isSirajGhost) {
-                const cleanups = { [`users/${gameState.userId}`]: null };
-                if (gameState.pomodoro.active && gameState.pomodoro.laptopId) {
-                    cleanups[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
-                }
-                const raceSession = gameState.race.session;
-                const raceSessionKey = gameState.race.sessionKey;
-                if (raceSession && raceSessionKey && (raceSession.hostId === gameState.userId ||
-                    raceSession.phase === 'teleporting')) {
-                    cleanups[lobbyPath(`minigames/race/sessions/${raceSessionKey}`)] = null;
-                }
-                update(ref(database), cleanups)
-                    .then(() => window.location.reload())
-                    .catch(() => window.location.reload());
-            } else {
-                set(ref(database, `users/${gameState.userId}/activeInGame`), false)
-                    .then(() => window.location.reload())
-                    .catch(() => window.location.reload());
+function doLogout() {
+    if (gameState.userId) {
+        if (gameState.isSirajGhost) {
+            const cleanups = { [`users/${gameState.userId}`]: null };
+            if (gameState.pomodoro.active && gameState.pomodoro.laptopId) {
+                cleanups[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
             }
+            const raceSession = gameState.race.session;
+            const raceSessionKey = gameState.race.sessionKey;
+            if (raceSession && raceSessionKey && (raceSession.hostId === gameState.userId ||
+                raceSession.phase === 'teleporting')) {
+                cleanups[lobbyPath(`minigames/race/sessions/${raceSessionKey}`)] = null;
+            }
+            update(ref(database), cleanups)
+                .then(() => window.location.reload())
+                .catch(() => window.location.reload());
         } else {
-            window.location.reload();
+            set(ref(database, `users/${gameState.userId}/activeInGame`), false)
+                .then(() => window.location.reload())
+                .catch(() => window.location.reload());
         }
-    });
+    } else {
+        window.location.reload();
+    }
+}
+
+function setupLogout() {
+    const confirmEl  = document.getElementById('logout-confirm');
+    const yesBtn     = document.getElementById('logout-confirm-yes');
+    const noBtn      = document.getElementById('logout-confirm-no');
+
+    const showConfirm = () => confirmEl.classList.remove('hidden');
+    const hideConfirm = () => confirmEl.classList.add('hidden');
+
+    document.getElementById('logout-btn').addEventListener('click', showConfirm);
+    yesBtn.addEventListener('click', () => { hideConfirm(); doLogout(); });
+    noBtn.addEventListener('click', hideConfirm);
+
+    // Dismiss on canvas tap / joystick use
+    document.getElementById('game-canvas').addEventListener('touchstart', hideConfirm, { passive: true });
+    document.getElementById('game-canvas').addEventListener('mousedown', hideConfirm);
 }
 
 function initializePlayerPosition() {
@@ -3807,6 +3862,7 @@ function gameLoop(timestamp) {
         updateWindParticles();
         updateDustParticles();
         updateInteractions();
+        updateSharedPomoProximity();
         render();
     } catch (e) {
         console.error('[gameLoop crash — loop kept alive]', e);
@@ -6264,6 +6320,23 @@ function drawPlayers(onlyLocal = false) {
             ctx.globalAlpha = 0.55 + 0.45 * colorAlpha;
         }
 
+        // Shared pomodoro group ring — drawn behind the avatar ring
+        if (gameState.sharedPomo.activeGroupMembers.includes(player.userId)) {
+            const t = Date.now() * 0.0025;
+            const pulse = 0.5 + 0.5 * Math.sin(t);
+            const gr = (PLAYER_SIZE / 2) + 12 + Math.sin(t) * 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, gr + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(59,185,171,${0.13 * pulse})`;
+            ctx.lineWidth = 8;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(0, 0, gr, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(59,185,171,${0.6 * pulse})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
         ctx.shadowBlur = 10;
         ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
         ctx.shadowOffsetY = 4 + (player.bobOffset || 0);
@@ -6314,5 +6387,456 @@ function drawPlayers(onlyLocal = false) {
 }
 
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED POMODORO
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SP_PROXIMITY_SQ = 200 * 200; // squared distance threshold (world units)
+const SP_MAX_GUESTS   = 2;
+const SP_INVITE_TTL   = 10000;     // ms
+
+function spPath(sub) { return lobbyPath(`sharedPomo/${sub}`); }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+function initSharedPomo() {
+    const sp = gameState.sharedPomo;
+
+    // Listen for invites addressed to us
+    const inviteRef = ref(database, spPath(`invites/${gameState.userId}`));
+    sp.unsubInvite = onValue(inviteRef, snap => {
+        const invite = snap.val();
+        if (!invite) { if (sp.phase === 'idle') hideSpToast(); return; }
+        if (sp.phase !== 'idle') return;
+        const age = Date.now() - (invite.sentAt || 0);
+        if (age > SP_INVITE_TTL) {
+            update(ref(database), { [spPath(`invites/${gameState.userId}`)]: null });
+            return;
+        }
+        sp.pendingInvite = invite;
+        showSpToast(invite);
+    });
+
+    // Wire guest-leave button once
+    document.getElementById('sp-guest-leave')?.addEventListener('click', leaveSharedPomo);
+}
+
+function setupSpSessionListener(sessionId) {
+    const sp = gameState.sharedPomo;
+    if (sp.unsubSession) { sp.unsubSession(); sp.unsubSession = null; }
+    const sessRef = ref(database, spPath(`sessions/${sessionId}`));
+    sp.unsubSession = onValue(sessRef, snap => {
+        const session = snap.val();
+        if (!session) {
+            if (sp.phase !== 'idle' && sp.phase !== 'active') onSpSessionCancelled();
+            return;
+        }
+        sp.session = session;
+        if (session.phase === 'gathering') {
+            if (sp.isHost) renderSpGatherPanel(session);
+        } else if (session.phase === 'active' && sp.phase !== 'active') {
+            launchSharedPomoWork(session);
+        }
+    });
+}
+
+// ── Proximity panel ───────────────────────────────────────────────────────────
+
+function updateSharedPomoProximity() {
+    const sp = gameState.sharedPomo;
+    if (sp.phase !== 'idle' || gameState.pomodoro.active) { renderSpNearbyPanel([]); return; }
+    const local = gameState.players[gameState.userId];
+    if (!local) { renderSpNearbyPanel([]); return; }
+
+    const nearby = [];
+    for (const p of Object.values(gameState.players)) {
+        if (p.userId === gameState.userId) continue;
+        if (!p.activeInGame) continue;
+        const dx = p.x - local.x, dy = p.y - local.y;
+        if (dx*dx + dy*dy < SP_PROXIMITY_SQ) nearby.push({ p, d: dx*dx + dy*dy });
+    }
+    nearby.sort((a, b) => a.d - b.d);
+    const players = nearby.slice(0, SP_MAX_GUESTS).map(n => n.p);
+
+    // Only re-render HTML if the set changed
+    const newIds = players.map(p => p.userId).join(',');
+    if (newIds === sp.nearbyPlayerIds) return;
+    sp.nearbyPlayerIds = newIds;
+    sp.nearbyPlayers = players;
+    renderSpNearbyPanel(players);
+}
+
+function renderSpNearbyPanel(players) {
+    const panel = document.getElementById('sp-nearby');
+    if (!panel) return;
+    if (players.length === 0) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    panel.innerHTML = `<div class="sp-nearby-label">مجاورون</div>` +
+        players.map(p => {
+            const av = p.avatar ? `<img src="${p.avatar}" alt="">` : (p.username||'?').charAt(0).toUpperCase();
+            const sp = gameState.sharedPomo;
+            const isPending = sp.session?.participants?.[p.userId]?.status === 'invited';
+            return `<div class="sp-nearby-chip${isPending?' sp-chip-sent':''}" data-uid="${p.userId}">
+                <div class="sp-chip-av">${av}</div>
+                <span class="sp-chip-name">${p.username||''}</span>
+                <span class="sp-chip-icon">${isPending ? '⏳' : '+'}</span>
+            </div>`;
+        }).join('');
+    panel.querySelectorAll('.sp-nearby-chip:not(.sp-chip-sent)').forEach(chip =>
+        chip.addEventListener('click', () => sendSpInvite(chip.dataset.uid))
+    );
+}
+
+// ── Invite flow ───────────────────────────────────────────────────────────────
+
+function sendSpInvite(targetUid) {
+    const sp = gameState.sharedPomo;
+    const local = gameState.players[gameState.userId];
+    if (!local) return;
+    // Guard: don't re-invite someone already pending
+    if (sp.session?.participants?.[targetUid]) return;
+
+    const sessionId = gameState.userId;
+
+    if (sp.phase === 'idle') {
+        sp.phase     = 'gathering';
+        sp.isHost    = true;
+        sp.sessionId = sessionId;
+        const sessionData = {
+            hostId: gameState.userId, hostName: local.username,
+            hostAvatar: local.avatar || null, phase: 'gathering',
+            participants: {
+                [gameState.userId]: { username: local.username, avatar: local.avatar || null, status: 'ready' }
+            }
+        };
+        update(ref(database), { [spPath(`sessions/${sessionId}`)]: sessionData });
+        setupSpSessionListener(sessionId);
+        setupSpGatherPanel();
+    }
+
+    const target = gameState.players[targetUid];
+    const invite = { fromId: gameState.userId, fromName: local.username,
+        fromAvatar: local.avatar || null, sessionId, sentAt: serverNow() };
+    update(ref(database), {
+        [spPath(`invites/${targetUid}`)]: invite,
+        [spPath(`sessions/${sessionId}/participants/${targetUid}`)]: {
+            username: target?.username || '', avatar: target?.avatar || null, status: 'invited'
+        }
+    });
+
+    // Auto-expire invite
+    setTimeout(() => {
+        const part = gameState.sharedPomo.session?.participants?.[targetUid];
+        if (part?.status === 'invited') {
+            update(ref(database), {
+                [spPath(`invites/${targetUid}`)]: null,
+                [spPath(`sessions/${sessionId}/participants/${targetUid}`)]: null
+            });
+        }
+    }, SP_INVITE_TTL + 500);
+}
+
+function acceptSpInvite() {
+    const sp = gameState.sharedPomo;
+    const invite = sp.pendingInvite;
+    if (!invite) return;
+    hideSpToast();
+
+    sp.phase     = 'guest-waiting';
+    sp.isHost    = false;
+    sp.sessionId = invite.sessionId;
+
+    // Teleport to near host
+    const host = gameState.players[invite.fromId];
+    const local = gameState.players[gameState.userId];
+    if (host && local) {
+        const offsetX = local.x < host.x ? -90 : 90;
+        teleportEntity(local, host.x + offsetX, host.y);
+        updatePlayerPosition(host.x + offsetX, host.y);
+    }
+    gameState.isLockedIn = true;
+
+    update(ref(database), {
+        [spPath(`sessions/${invite.sessionId}/participants/${gameState.userId}/status`)]: 'ready',
+        [spPath(`invites/${gameState.userId}`)]: null
+    });
+    sp.pendingInvite = null;
+
+    setupSpSessionListener(invite.sessionId);
+    showSpWaitPanel({ hostName: invite.fromName, hostAvatar: invite.fromAvatar });
+}
+
+function declineSpInvite() {
+    const sp = gameState.sharedPomo;
+    const invite = sp.pendingInvite;
+    hideSpToast();
+    if (invite) update(ref(database), {
+        [spPath(`invites/${gameState.userId}`)]: null,
+        [spPath(`sessions/${invite.sessionId}/participants/${gameState.userId}`)]: null
+    });
+    sp.pendingInvite = null;
+}
+
+// ── Gathering panel (host) ────────────────────────────────────────────────────
+
+function setupSpGatherPanel() {
+    const panel = document.getElementById('sp-gather');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    renderSpGatherPanel(gameState.sharedPomo.session || { participants: {} });
+
+    // Config option buttons
+    ['sp-cfg-work-opts','sp-cfg-break-opts','sp-cfg-sess-opts'].forEach(id => {
+        document.getElementById(id)?.querySelectorAll('.sp-opt').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById(id)?.querySelectorAll('.sp-opt').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const inp = document.getElementById(id)?.querySelector('.sp-cfg-input');
+                if (inp) inp.value = '';
+            });
+        });
+    });
+
+    // Start button — clone to avoid stacked listeners
+    const startBtn = document.getElementById('sp-start-btn');
+    if (startBtn) {
+        const fresh = startBtn.cloneNode(true);
+        startBtn.replaceWith(fresh);
+        fresh.addEventListener('click', () => { if (!fresh.disabled) startSharedPomoSession(); });
+    }
+    // Cancel
+    const cancelBtn = document.getElementById('sp-gather-cancel');
+    if (cancelBtn) {
+        const fresh = cancelBtn.cloneNode(true);
+        cancelBtn.replaceWith(fresh);
+        fresh.addEventListener('click', cancelSharedPomo);
+    }
+}
+
+function renderSpGatherPanel(session) {
+    const membersEl = document.getElementById('sp-gather-members');
+    if (!membersEl) return;
+    const parts = Object.entries(session.participants || {}).filter(([uid]) => uid !== gameState.userId);
+    membersEl.innerHTML = parts.length === 0
+        ? '<span class="sp-empty-hint">في انتظار القبول…</span>'
+        : parts.map(([, p]) => {
+            const ready = p.status === 'ready';
+            const av = p.avatar ? `<img src="${p.avatar}" alt="">` : (p.username||'?').charAt(0).toUpperCase();
+            return `<div class="sp-member-chip">
+                <div class="sp-member-av${ready?' sp-av-ready':''}">${av}</div>
+                <span class="sp-member-name">${p.username||''}</span>
+                <div class="sp-member-dot${ready?' sp-dot-ready':''}"></div>
+            </div>`;
+        }).join('');
+
+    const startBtn = document.getElementById('sp-start-btn');
+    if (startBtn) {
+        const hasReady = parts.some(([, p]) => p.status === 'ready');
+        startBtn.disabled = !hasReady;
+        startBtn.textContent = hasReady ? 'انا لها 🚀' : 'انتظر المشاركين…';
+    }
+}
+
+// ── Guest waiting panel ───────────────────────────────────────────────────────
+
+function showSpWaitPanel(hostInfo) {
+    const panel = document.getElementById('sp-guest-wait');
+    if (!panel) return;
+    const avEl   = document.getElementById('sp-wait-host-av');
+    const nameEl = document.getElementById('sp-wait-host-name');
+    if (avEl) avEl.innerHTML = hostInfo.hostAvatar
+        ? `<img src="${hostInfo.hostAvatar}" alt="">`
+        : (hostInfo.hostName||'?').charAt(0).toUpperCase();
+    if (nameEl) nameEl.textContent = hostInfo.hostName || '';
+    panel.classList.remove('hidden');
+}
+
+// ── Start / launch ────────────────────────────────────────────────────────────
+
+function spGetCfgVal(optsId, inputId, def) {
+    const inp = document.getElementById(inputId);
+    if (inp?.value) { const v = parseInt(inp.value); if (v > 0) return v; }
+    const active = document.getElementById(optsId)?.querySelector('.sp-opt.active');
+    return active ? parseInt(active.dataset.val) : def;
+}
+
+function startSharedPomoSession() {
+    const sp = gameState.sharedPomo;
+    if (!sp.isHost || !sp.sessionId) return;
+    const workMins  = spGetCfgVal('sp-cfg-work-opts',  'sp-cfg-work',  25);
+    const breakMins = spGetCfgVal('sp-cfg-break-opts', 'sp-cfg-break', 5);
+    const sessions  = spGetCfgVal('sp-cfg-sess-opts',  null,            1);
+    const startTime = serverNow() + 3500;
+    const endTime   = startTime + workMins * 60000;
+    update(ref(database), {
+        [spPath(`sessions/${sp.sessionId}/phase`)]:         'active',
+        [spPath(`sessions/${sp.sessionId}/workDuration`)]:  workMins,
+        [spPath(`sessions/${sp.sessionId}/breakDuration`)]: breakMins,
+        [spPath(`sessions/${sp.sessionId}/sessionsLeft`)]:  sessions,
+        [spPath(`sessions/${sp.sessionId}/totalSessions`)]: sessions,
+        [spPath(`sessions/${sp.sessionId}/startTime`)]:     startTime,
+        [spPath(`sessions/${sp.sessionId}/endTime`)]:       endTime,
+    });
+    document.getElementById('sp-gather')?.classList.add('hidden');
+}
+
+function launchSharedPomoWork(session) {
+    const sp = gameState.sharedPomo;
+    sp.phase = 'active';
+
+    // Snapshot group members for canvas indicators, then unsubscribe
+    sp.activeGroupMembers = Object.keys(session.participants || {});
+    if (sp.unsubSession) { sp.unsubSession(); sp.unsubSession = null; }
+
+    // Hide all shared pomo panels
+    document.getElementById('sp-gather')?.classList.add('hidden');
+    document.getElementById('sp-guest-wait')?.classList.add('hidden');
+    gameState.isLockedIn = false;
+
+    if (gameState.pomodoro.active) return; // already in a session
+
+    // Find nearest unclaimed laptop
+    const local = gameState.players[gameState.userId];
+    if (!local) return;
+    let bestLaptop = null, bestDist = Infinity;
+    for (const laptop of gameState.laptops) {
+        if (laptop.claimedBy) continue;
+        const dx = laptop.x - local.x, dy = laptop.y - local.y;
+        const d = dx*dx + dy*dy;
+        if (d < bestDist) { bestDist = d; bestLaptop = laptop; }
+    }
+
+    if (!bestLaptop) return; // no laptop available — edge case
+
+    // Set up pomodoro state (phase='wait' so kidnap animation triggers work start)
+    gameState.pomodoro.active        = true;
+    gameState.pomodoro.laptopId      = bestLaptop.id;
+    gameState.pomodoro.phase         = 'wait';
+    gameState.pomodoro.workDuration  = session.workDuration;
+    gameState.pomodoro.breakDuration = session.breakDuration;
+    gameState.pomodoro.sessionsLeft  = session.sessionsLeft;
+    gameState.pomodoro.totalSessions = session.totalSessions;
+    gameState.pomodoro.createdAt     = Date.now();
+    sp.agreedEndTime                 = session.endTime;
+
+    update(ref(database), { [lobbyPath(`pomodoro/${bestLaptop.id}`)]: {
+        claimedBy: gameState.userId, phase: 'wait', endTime: 0,
+        workDuration: session.workDuration, breakDuration: session.breakDuration,
+        sessionsLeft: session.sessionsLeft, totalSessions: session.totalSessions,
+        createdAt: Date.now()
+    }});
+
+    // Delay kidnap until startTime
+    const delay = Math.max(0, session.startTime - serverNow());
+    setTimeout(() => {
+        if (gameState.sharedPomo.phase === 'active') startKidnapAnimation(bestLaptop);
+    }, delay);
+
+    // Host cleans up Firebase session after everyone has started
+    if (sp.isHost) setTimeout(() => {
+        update(ref(database), { [spPath(`sessions/${sp.sessionId}`)]: null });
+    }, delay + 12000);
+}
+
+// ── Cancel / leave ────────────────────────────────────────────────────────────
+
+function cancelSharedPomo() {
+    const sp = gameState.sharedPomo;
+    if (!sp.isHost || !sp.sessionId) return;
+    update(ref(database), { [spPath(`sessions/${sp.sessionId}`)]: null });
+    document.getElementById('sp-gather')?.classList.add('hidden');
+    cleanupSpLocal();
+}
+
+function leaveSharedPomo() {
+    const sp = gameState.sharedPomo;
+    if (sp.sessionId) update(ref(database), {
+        [spPath(`sessions/${sp.sessionId}/participants/${gameState.userId}`)]: null
+    });
+    gameState.isLockedIn = false;
+    document.getElementById('sp-guest-wait')?.classList.add('hidden');
+    cleanupSpLocal();
+}
+
+function onSpSessionCancelled() {
+    gameState.isLockedIn = false;
+    document.getElementById('sp-gather')?.classList.add('hidden');
+    document.getElementById('sp-guest-wait')?.classList.add('hidden');
+    showSpInfoToast('تم إلغاء الجلسة المشتركة');
+    cleanupSpLocal();
+}
+
+function cleanupSpLocal() {
+    const sp = gameState.sharedPomo;
+    if (sp.unsubSession) { sp.unsubSession(); sp.unsubSession = null; }
+    sp.session = null; sp.sessionId = null; sp.isHost = false;
+    sp.phase = 'idle'; sp.agreedEndTime = 0;
+    sp.nearbyPlayerIds = ''; // force panel re-render
+    // Don't clear activeGroupMembers — keep indicator alive during work
+}
+
+// ── Toast (invite) ────────────────────────────────────────────────────────────
+
+function showSpToast(invite) {
+    const sp = gameState.sharedPomo;
+    const toast = document.getElementById('sp-invite-toast');
+    if (!toast) return;
+
+    const avEl = document.getElementById('sp-toast-avatar');
+    if (avEl) avEl.innerHTML = invite.fromAvatar
+        ? `<img src="${invite.fromAvatar}" alt="">`
+        : (invite.fromName||'?').charAt(0).toUpperCase();
+    const nameEl = document.getElementById('sp-toast-name');
+    if (nameEl) nameEl.textContent = invite.fromName || '';
+
+    toast.classList.remove('hidden');
+
+    // Animate progress bar
+    const bar = document.getElementById('sp-toast-bar');
+    const elapsed0 = Date.now() - (invite.sentAt || Date.now());
+    const remaining = Math.max(500, SP_INVITE_TTL - elapsed0);
+
+    if (bar) bar.style.width = ((remaining / SP_INVITE_TTL) * 100) + '%';
+    if (sp.toastInterval) clearInterval(sp.toastInterval);
+    const start = Date.now();
+    sp.toastInterval = setInterval(() => {
+        const pct = Math.max(0, ((remaining - (Date.now() - start)) / remaining) * 100);
+        if (bar) bar.style.width = pct + '%';
+        if (pct <= 0) { clearInterval(sp.toastInterval); sp.toastInterval = null; hideSpToast(); }
+    }, 50);
+
+    if (sp.toastTimeout) clearTimeout(sp.toastTimeout);
+    sp.toastTimeout = setTimeout(() => {
+        hideSpToast();
+        update(ref(database), { [spPath(`invites/${gameState.userId}`)]: null });
+        sp.pendingInvite = null;
+    }, remaining);
+
+    // Wire buttons (clone to prevent stacking)
+    ['sp-toast-yes','sp-toast-no'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        const fresh = btn.cloneNode(true);
+        btn.replaceWith(fresh);
+        fresh.addEventListener('click', id === 'sp-toast-yes' ? acceptSpInvite : declineSpInvite);
+    });
+}
+
+function hideSpToast() {
+    const sp = gameState.sharedPomo;
+    document.getElementById('sp-invite-toast')?.classList.add('hidden');
+    if (sp.toastInterval) { clearInterval(sp.toastInterval); sp.toastInterval = null; }
+    if (sp.toastTimeout)  { clearTimeout(sp.toastTimeout);   sp.toastTimeout  = null; }
+}
+
+function showSpInfoToast(message) {
+    const el = document.createElement('div');
+    el.className = 'sp-info-toast';
+    el.textContent = message;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('sp-info-toast-show'));
+    setTimeout(() => { el.classList.remove('sp-info-toast-show'); setTimeout(() => el.remove(), 350); }, 2500);
+}
 
 // EOF

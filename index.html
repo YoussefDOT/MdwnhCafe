@@ -86,6 +86,19 @@
         <!-- زر الخروج (يسار الشاشة، مستقل عن بطاقة المستخدم) -->
         <button id="logout-btn" class="logout-pill">خروج</button>
 
+        <!-- تأكيد الخروج -->
+        <div id="logout-confirm" class="logout-confirm hidden">
+            <span>تأكيد الخروج؟</span>
+            <button id="logout-confirm-yes">خروج</button>
+            <button id="logout-confirm-no">إلغاء</button>
+        </div>
+
+        <!-- مؤشر الاتصال -->
+        <div id="offline-indicator" class="offline-indicator hidden">
+            <span class="offline-dot"></span>
+            <span>جاري إعادة الاتصال…</span>
+        </div>
+
         <canvas id="game-canvas"></canvas>
 
         <!-- عصا التحكم للجوال (تظهر على الجوال فقط) -->
@@ -174,6 +187,80 @@
             <button id="pomodoro-cancel" class="btn-secondary pomodoro-back-btn">رجوع</button>
             <button id="pomodoro-test" class="btn-cancel" style="display:none;margin-top:5px;background:none;border:none;color:#ff9b3a;cursor:pointer;font-weight:600;font-size:13px;letter-spacing:0.5px;">⚡ وضع الاختبار</button>
         </div>
+    </div>
+
+    <!-- ─── Shared Pomodoro UI ─── -->
+
+    <!-- Proximity panel: nearby players who can be invited -->
+    <div id="sp-nearby" class="sp-nearby hidden"></div>
+
+    <!-- Invite toast: shown to the person being invited -->
+    <div id="sp-invite-toast" class="sp-invite-toast hidden">
+        <div class="sp-toast-body">
+            <div id="sp-toast-avatar" class="sp-toast-av"></div>
+            <div class="sp-toast-info">
+                <span id="sp-toast-name" class="sp-toast-name"></span>
+                <span class="sp-toast-msg">يدعوك لجلسة عمل مشتركة</span>
+            </div>
+        </div>
+        <div class="sp-toast-btns">
+            <button id="sp-toast-yes" class="sp-btn-yes">نعم</button>
+            <button id="sp-toast-no"  class="sp-btn-no">لا</button>
+        </div>
+        <div class="sp-toast-bar-track">
+            <div id="sp-toast-bar" class="sp-toast-bar"></div>
+        </div>
+    </div>
+
+    <!-- Gathering panel: host sees who has joined + config + start -->
+    <div id="sp-gather" class="sp-gather hidden">
+        <div class="sp-gather-header">
+            <span class="sp-gather-title">جلسة مشتركة</span>
+            <button id="sp-gather-cancel" class="sp-close-btn" aria-label="إلغاء">✕</button>
+        </div>
+        <div id="sp-gather-members" class="sp-gather-members">
+            <span class="sp-empty-hint">في انتظار القبول…</span>
+        </div>
+        <div class="sp-gather-config">
+            <div class="sp-cfg-row">
+                <label>عمل</label>
+                <div class="sp-cfg-opts" id="sp-cfg-work-opts">
+                    <button class="sp-opt active" data-val="25">25</button>
+                    <button class="sp-opt" data-val="50">50</button>
+                    <input id="sp-cfg-work" type="number" class="sp-cfg-input" placeholder="د" min="1" max="180">
+                </div>
+            </div>
+            <div class="sp-cfg-row">
+                <label>راحة</label>
+                <div class="sp-cfg-opts" id="sp-cfg-break-opts">
+                    <button class="sp-opt active" data-val="5">5</button>
+                    <button class="sp-opt" data-val="10">10</button>
+                    <input id="sp-cfg-break" type="number" class="sp-cfg-input" placeholder="د" min="1" max="60">
+                </div>
+            </div>
+            <div class="sp-cfg-row">
+                <label>جلسات</label>
+                <div class="sp-cfg-opts" id="sp-cfg-sess-opts">
+                    <button class="sp-opt active" data-val="1">1</button>
+                    <button class="sp-opt" data-val="2">2</button>
+                    <button class="sp-opt" data-val="3">3</button>
+                </div>
+            </div>
+        </div>
+        <button id="sp-start-btn" class="sp-start-btn" disabled>انتظر المشاركين…</button>
+    </div>
+
+    <!-- Guest waiting panel: shown to guests after accepting -->
+    <div id="sp-guest-wait" class="sp-guest-wait hidden">
+        <div class="sp-wait-host">
+            <div id="sp-wait-host-av" class="sp-wait-av"></div>
+            <div class="sp-wait-info">
+                <span id="sp-wait-host-name" class="sp-wait-name"></span>
+                <span class="sp-wait-subtitle">في انتظار بدء الجلسة…</span>
+            </div>
+        </div>
+        <div class="sp-wait-dots"><span></span><span></span><span></span></div>
+        <button id="sp-guest-leave" class="sp-leave-btn">إلغاء المشاركة</button>
     </div>
 
     <!-- لوحة سباق الاستراحة -->
