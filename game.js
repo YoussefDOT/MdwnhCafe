@@ -3222,7 +3222,19 @@ function startPomodoroPhase(phase) {
         update(ref(database), updates);
     }
 
-    if (phase === 'work') {
+    if (phase === 'break') {
+        // Hard-reset any stuck state so the player can always move during break
+        gameState.isLockedIn = false;
+        if (gameState.anim.active) {
+            gameState.anim.active  = false;
+            gameState.anim.phase   = 'none';
+            gameState.anim.progress = 0;
+        }
+        // Ensure focus panel isn't blocking the joystick on mobile
+        const breakPanel = document.getElementById('focus-sounds-panel');
+        if (breakPanel) breakPanel.classList.remove('active');
+        setMobileFocusMode(false);
+    } else if (phase === 'work') {
         setMobileFocusMode(true);
         const panel = document.getElementById('focus-sounds-panel');
         if (panel) panel.classList.add('active');
