@@ -4597,16 +4597,23 @@ function renderCoffee() {
         ctx.translate(mugX, mugY);
         ctx.rotate(mug.tilt || 0);
         if (mugImg && mugImg.complete && mugImg.naturalWidth) {
-            ctx.drawImage(mugImg, -COFFEE_MUG_W / 2, -COFFEE_MUG_H / 2, COFFEE_MUG_W, COFFEE_MUG_H);
-        }
-        // Flash overlay using 'source-atop' so it only tints opaque mug pixels
-        if (mug.flashFrames > 0) {
-            const flashAlpha = Math.min(1, mug.flashFrames / 2.5) * 0.72;
-            // Redraw mug as color-tinted mask using source-atop
-            ctx.globalAlpha = flashAlpha;
-            ctx.globalCompositeOperation = 'source-atop';
-            ctx.fillStyle = mug.flashType === 'bad' ? '#ff3030' : '#ffffff';
-            ctx.fillRect(-COFFEE_MUG_W / 2, -COFFEE_MUG_H / 2, COFFEE_MUG_W, COFFEE_MUG_H);
+            if (mug.flashFrames > 0) {
+                // Tint mug on an offscreen canvas so source-atop only affects
+                // the mug's own pixels — never the transparent bounding box.
+                const oc   = document.createElement('canvas');
+                oc.width   = COFFEE_MUG_W;
+                oc.height  = COFFEE_MUG_H;
+                const octx = oc.getContext('2d');
+                octx.drawImage(mugImg, 0, 0, COFFEE_MUG_W, COFFEE_MUG_H);
+                const flashAlpha = Math.min(1, mug.flashFrames / 2.5) * 0.72;
+                octx.globalAlpha = flashAlpha;
+                octx.globalCompositeOperation = 'source-atop';
+                octx.fillStyle = mug.flashType === 'bad' ? '#ff3030' : '#ffffff';
+                octx.fillRect(0, 0, COFFEE_MUG_W, COFFEE_MUG_H);
+                ctx.drawImage(oc, -COFFEE_MUG_W / 2, -COFFEE_MUG_H / 2);
+            } else {
+                ctx.drawImage(mugImg, -COFFEE_MUG_W / 2, -COFFEE_MUG_H / 2, COFFEE_MUG_W, COFFEE_MUG_H);
+            }
         }
         ctx.restore();
 
