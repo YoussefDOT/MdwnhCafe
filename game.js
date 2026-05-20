@@ -5904,9 +5904,7 @@ function updatePomodoro() {
                 updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
                 update(ref(database), updates);
                 gameState.pomodoro.laptopId = null;
-                if (Notification.permission === "granted") {
-                    new Notification("مدونة ستوديو", { body: "لقد أتممت جميع جلسات العمل بنجاح!" });
-                }
+                try { if (Notification.permission === "granted") new Notification("مدونة ستوديو", { body: "لقد أتممت جميع جلسات العمل بنجاح!" }); } catch(e) {}
 
                 // STOP ALL FOCUS SOUNDS
                 if (gameState.focusAudioEngine) {
@@ -5927,9 +5925,7 @@ function updatePomodoro() {
                 } else {
                     playSoundRobust(gameState.sounds.timeReturn);
                 }
-                if (Notification.permission === "granted") {
-                    new Notification("مدونة ستوديو", { body: "انتهى وقت الراحة. هيا للعمل!" });
-                }
+                try { if (Notification.permission === "granted") new Notification("مدونة ستوديو", { body: "انتهى وقت الراحة. هيا للعمل!" }); } catch(e) {}
 
                 // Set state briefly to wait so that kidnap starts next work cycle timer
                 gameState.pomodoro.phase = 'wait';
