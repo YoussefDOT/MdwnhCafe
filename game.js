@@ -4044,6 +4044,9 @@ function createCoffeeSession() {
 
 function startLocalCoffee(session) {
     if (gameState.coffee.active && gameState.coffee.localMug) return;
+    // Hide top-right user card so it doesn't overlap the coffee HUD
+    const _uc = document.getElementById('user-card');
+    if (_uc) _uc.style.display = 'none';
     const participant = session.participants[gameState.userId];
     gameState.coffee.active          = true;
     gameState.coffee.localResultSent = false;
@@ -4155,6 +4158,9 @@ function returnFromCoffee(clearState) {
     // Fade out applause if playing
     fadeOutAudio(gameState.sounds.minigameApplause, 900);
     gameState.coffee.applausePlayed = false;
+    // Restore user card
+    const _uc = document.getElementById('user-card');
+    if (_uc) _uc.style.display = '';
     // Delete the session from Firebase so the same player can start a new one
     const sessionKeyToDelete = gameState.coffee.sessionKey;
     if (sessionKeyToDelete) {
