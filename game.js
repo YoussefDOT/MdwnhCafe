@@ -1789,7 +1789,7 @@ function audioObjPlayHelper(el) {
 // Pool of pre-loaded Audio instances per src — avoids cloneNode() unreliability.
 // Finds a free (paused/ended) instance; creates a new one if all are busy.
 const _audioPool = {};
-function playPooledSound(src, volume = 1) {
+function playPooledSound(src, volume = 1, playbackRate = 1) {
     if (!_audioPool[src]) _audioPool[src] = [];
     const pool = _audioPool[src];
     let audio = pool.find(a => a.paused || a.ended);
@@ -1798,6 +1798,7 @@ function playPooledSound(src, volume = 1) {
         pool.push(audio);
     }
     audio.volume = volume;
+    audio.playbackRate = playbackRate;
     audio.currentTime = 0;
     audio.play().catch(() => {});
 }
@@ -4470,8 +4471,7 @@ function updateCoffeeMode() {
                 mug.flashFrames = 7; mug.flashType = 'good';
                 spawnCatchParticles(sx, mugSY, 'good');
                 addCoffeeShake(7, 0.83);
-                // Play collect sound (cloned so rapid catches overlap)
-                playPooledSound('Sound/Minigame_Coffee_Collect.mp3');
+                playPooledSound('Sound/Minigame_Coffee_Collect.mp3', 1, 0.85 + Math.random() * 0.35);
                 update(ref(database), {
                     [coffeeSessionPath(`participants/${gameState.userId}/score`)]: mug.score
                 });
