@@ -86,13 +86,6 @@
         <!-- زر الخروج (يسار الشاشة، مستقل عن بطاقة المستخدم) -->
         <button id="logout-btn" class="logout-pill">خروج</button>
 
-        <!-- تأكيد الخروج -->
-        <div id="logout-confirm" class="logout-confirm hidden">
-            <span>تأكيد الخروج؟</span>
-            <button id="logout-confirm-yes">خروج</button>
-            <button id="logout-confirm-no">إلغاء</button>
-        </div>
-
         <!-- مؤشر الاتصال -->
         <div id="offline-indicator" class="offline-indicator hidden">
             <span class="offline-dot"></span>
@@ -262,6 +255,9 @@
         <div class="sp-wait-dots"><span></span><span></span><span></span></div>
         <button id="sp-guest-leave" class="sp-leave-btn">إلغاء المشاركة</button>
     </div>
+
+    <!-- Coop task panel: shown during active shared session -->
+    <div id="sp-coop-tasks" class="sp-coop-tasks hidden"></div>
 
     <!-- لوحة سباق الاستراحة -->
     <div id="race-panel" class="race-panel hidden">

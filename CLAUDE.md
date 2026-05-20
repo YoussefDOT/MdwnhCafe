@@ -132,3 +132,16 @@ Canvas is scaled by `window.devicePixelRatio` in `resizeCanvas()`:
 - `gameState.dpr` stores the current ratio
 - `render()` and `renderRace()` call `ctx.save(); ctx.scale(dpr, dpr)` so all drawing uses **logical pixels**
 - `drawFocusMask`: mCanvas stays physical for sharp gradients; player positions computed with `* dpr`; drawn via `ctx.drawImage(mCanvas, 0, 0, W, H)`
+
+## Shared Pomodoro Firebase Cleanup
+
+`sharedPomo/sessions/{hostId}` is a temporary coordination doc — it **must not linger** in Firebase after the session starts.
+
+**Cleanup rules:**
+1. Host calls `update(... { [spPath('sessions/{id}')]: null })` 12 seconds after `startTime` in `launchSharedPomoWork` — enough time for all clients to receive the session and start.
+2. Host's `onDisconnect` for the laptop pomodoro path (`lobbyPath('pomodoro/{laptopId}')`) is set in `launchSharedPomoWork` to auto-remove if host disconnects mid-session.
+3. `cancelSharedPomo()` deletes the session immediately when host cancels before starting.
+4. `leaveSharedPomo()` removes only the local participant's entry from `participants/`.
+5. The invite doc (`sharedPomo/invites/{uid}`) is always cleaned up: on accept, decline, timeout (10s), or auto-expire timeout in `sendSpInvite`.
+
+**Do NOT leave `sharedPomo/sessions` docs alive indefinitely** — they are not permanent session records.
