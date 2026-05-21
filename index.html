@@ -86,12 +86,6 @@
         <!-- زر الخروج (يسار الشاشة، مستقل عن بطاقة المستخدم) -->
         <button id="logout-btn" class="logout-pill">خروج</button>
 
-        <!-- مؤشر الاتصال -->
-        <div id="offline-indicator" class="offline-indicator hidden">
-            <span class="offline-dot"></span>
-            <span>جاري إعادة الاتصال…</span>
-        </div>
-
         <canvas id="game-canvas"></canvas>
 
         <!-- عصا التحكم للجوال (تظهر على الجوال فقط) -->
@@ -256,8 +250,51 @@
         <button id="sp-guest-leave" class="sp-leave-btn">إلغاء المشاركة</button>
     </div>
 
-    <!-- Coop task panel: shown during active shared session -->
-    <div id="sp-coop-tasks" class="sp-coop-tasks hidden"></div>
+    <!-- Coop task panel: shown to host during active shared session -->
+    <div id="sp-coop-tasks" class="sp-coop-tasks hidden">
+        <button id="sp-coop-leave" class="sp-coop-leave-btn" title="مغادرة الجلسة">✕</button>
+    </div>
+
+    <!-- Mid-session join panel: shown to free players near an active coop session -->
+    <div id="sp-join-panel" class="sp-join-panel hidden">
+        <div class="sp-join-header">
+            <div id="sp-join-avatars" class="sp-join-avatars"></div>
+            <div class="sp-join-info">
+                <span id="sp-join-title" class="sp-join-title"></span>
+                <span class="sp-join-sub">جلسة عمل جارية</span>
+            </div>
+        </div>
+        <div id="sp-join-details" class="sp-join-details hidden">
+            <div class="sp-join-stat"><span class="sp-jstat-label">الوقت المتبقي</span><span id="sp-join-timer" class="sp-jstat-val"></span></div>
+            <div class="sp-join-stat"><span class="sp-jstat-label">راحة</span><span id="sp-join-break" class="sp-jstat-val"></span></div>
+            <div class="sp-join-stat"><span class="sp-jstat-label">جلسات</span><span id="sp-join-sess" class="sp-jstat-val"></span></div>
+        </div>
+        <div class="sp-join-btns">
+            <button id="sp-join-peek" class="sp-join-btn-peek">دخول؟</button>
+            <button id="sp-join-confirm" class="sp-join-btn-confirm hidden">تأكيد الدخول</button>
+            <button id="sp-join-cancel" class="sp-join-btn-cancel">إلغاء</button>
+        </div>
+    </div>
+
+    <!-- Pomo leave button (shown during any active pomo) -->
+    <button id="pomo-leave-btn" class="pomo-leave-btn hidden">مغادرة الجلسة</button>
+
+    <!-- Pomo leave confirmations -->
+    <div id="pomo-leave-confirm1" class="pomo-leave-confirm hidden">
+        <span class="plc-title">هل انت متأكد؟</span>
+        <div class="plc-btns">
+            <button id="plc1-yes" class="plc-btn-yes">نعم</button>
+            <button id="plc1-no"  class="plc-btn-no">لا</button>
+        </div>
+    </div>
+    <div id="pomo-leave-confirm2" class="pomo-leave-confirm hidden">
+        <span class="plc-title">هل انت حقًا حقًا متأكد؟</span>
+        <span class="plc-sub">انت لها! تستطيع اكمال ما بدأته!</span>
+        <div class="plc-btns">
+            <button id="plc2-yes" class="plc-btn-yes">نعم، خروج</button>
+            <button id="plc2-no"  class="plc-btn-no">رجوع</button>
+        </div>
+    </div>
 
     <!-- لوحة سباق الاستراحة -->
     <div id="race-panel" class="race-panel hidden">
