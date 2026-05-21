@@ -3637,7 +3637,7 @@ function updateInteractions() {
         gameState.activeCoffeeZone = false;
     }
 
-    const baseAlpha = gameState.isLockedIn ? 0.95 : 0.8;
+    const baseAlpha = gameState.isLockedIn ? 0.475 : 0.4;
     let targetAlpha = 0;
     if (gameState.isLockedIn) {
         // Always full darkening when locked in — don't rely on proximity

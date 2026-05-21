@@ -2211,7 +2211,7 @@ body.is-mobile .race-hud { top: 70px; }
 /* ── Pomo leave button ── */
 .pomo-leave-btn {
     position: fixed;
-    bottom: 24px; left: 24px;
+    top: 57px; left: 18px;
     background: rgba(18,18,18,0.75);
     backdrop-filter: blur(16px) saturate(1.4);
     border: 1px solid rgba(255,255,255,0.09);
@@ -2223,12 +2223,12 @@ body.is-mobile .race-hud { top: 70px; }
     transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.25s, transform 0.25s;
 }
 .pomo-leave-btn:hover { background: rgba(220,60,60,0.15); border-color: rgba(220,60,60,0.25); color: rgba(255,120,120,0.85); }
-.pomo-leave-btn.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }
+.pomo-leave-btn.hidden { opacity: 0; transform: translateY(-6px); pointer-events: none; }
 
 /* ── Pomo leave confirmation dialogs ── */
 .pomo-leave-confirm {
     position: fixed;
-    bottom: 70px; left: 24px;
+    top: 94px; left: 18px;
     background: rgba(18,18,18,0.92);
     backdrop-filter: blur(20px) saturate(1.6);
     border: 1px solid rgba(255,255,255,0.1);
@@ -2269,5 +2269,5 @@ body.is-mobile .sp-guest-wait { bottom: 100px; width: calc(100vw - 32px); max-wi
 body.is-mobile .sp-invite-toast { right: 12px; left: 12px; width: auto; bottom: 100px; }
 body.is-mobile .sp-coop-tasks { right: 12px; bottom: 100px; max-width: calc(100vw - 24px); }
 body.is-mobile .sp-join-panel { left: 12px; width: calc(100vw - 24px); max-width: 220px; top: auto; bottom: 170px; transform: none; }
-body.is-mobile .pomo-leave-btn { bottom: 100px; left: 12px; }
-body.is-mobile .pomo-leave-confirm { bottom: 145px; left: 12px; }
+body.is-mobile .pomo-leave-btn { top: 50px; left: 14px; }
+body.is-mobile .pomo-leave-confirm { top: 85px; left: 14px; }
