@@ -57,24 +57,33 @@ class FocusAudioEngine {
             brown:        { active: false, volume: 0.5, nodes: null },
             wind:         { active: false, volume: 0.5, nodes: null },
             plane:        { active: false, volume: 0.5, nodes: null },
-            stream:       { active: false, volume: 0.5, nodes: null },
+            ocean:        { active: false, volume: 0.5, nodes: null },
         };
-        // Normalized ambient silent levels
+        // Normalized ambient levels (file-based sounds use 1.0, synthesized stay lower)
         this.baseVolumeScale = {
-            rain: 0.18,
-            rain_muffled: 0.15,
-            fire: 0.22,
-            forest: 0.16,
-            brown: 0.22,
-            wind: 0.09,
+            rain: 1.0,
+            rain_muffled: 1.0,
+            fire: 1.0,
+            forest: 1.0,
+            brown: 1.0,
+            wind: 1.0,
             plane: 0.09,
-            stream: 0.15,
+            ocean: 1.0,
         };
         this.buffers = {
             timeBreak: null,
             timeReturn: null,
             kidnap: null,
             yipee: null
+        };
+        this.focusBuffers = {
+            rain: null,
+            rain_muffled: null,
+            fire: null,
+            forest: null,
+            brown: null,
+            wind: null,
+            ocean: null,
         };
     }
 
@@ -86,6 +95,7 @@ class FocusAudioEngine {
         this.masterGain.gain.setValueAtTime(1.0 * this.overallVolume, this.ctx.currentTime);
         this.masterGain.connect(this.ctx.destination);
         this.loadSoundEffects();
+        this.loadFocusSoundBuffers();
 
         const resumeCtx = () => {
             if (this.ctx && this.ctx.state === 'suspended') {
@@ -112,6 +122,27 @@ class FocusAudioEngine {
             this.buffers.yipee = await loadBuffer('Sound/Yipee.mp3');
         } catch(e) {
             console.log("Failed to load Web Audio sound effects:", e);
+        }
+    }
+
+    async loadFocusSoundBuffers() {
+        const files = {
+            rain:         'Sound/Focus Sounds/Rain.mp3',
+            rain_muffled: 'Sound/Focus Sounds/Muffled rain.mp3',
+            fire:         'Sound/Focus Sounds/Boiling.mp3',
+            forest:       'Sound/Focus Sounds/Forest.mp3',
+            brown:        'Sound/Focus Sounds/Brown Noise.mp3',
+            wind:         'Sound/Focus Sounds/Wind.mp3',
+            ocean:        'Sound/Focus Sounds/Ocean.mp3',
+        };
+        for (const [key, url] of Object.entries(files)) {
+            try {
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
+                this.focusBuffers[key] = await this.ctx.decodeAudioData(arrayBuffer);
+            } catch(e) {
+                console.log(`Failed to load focus sound [${key}]:`, e);
+            }
         }
     }
 
@@ -190,49 +221,18 @@ class FocusAudioEngine {
         let source = null;
         let secondaryNodes = [];
 
-        if (name === 'rain') {
-            // Bright rain — white noise through a bandpass around 2kHz for crisp drops
-            source = this.createWhiteNoiseNode();
-            const bpRain = this.ctx.createBiquadFilter();
-            bpRain.type = 'bandpass';
-            bpRain.frequency.setValueAtTime(2200, this.ctx.currentTime);
-            bpRain.Q.setValueAtTime(0.5, this.ctx.currentTime);
-            source.connect(bpRain);
-            bpRain.connect(gainNode);
-            source.start();
-            secondaryNodes.push(bpRain);
-        } else if (name === 'rain_muffled') {
-            source = this.createWhiteNoiseNode();
-            const filter = this.ctx.createBiquadFilter();
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(500, this.ctx.currentTime);
-            source.connect(filter);
-            filter.connect(gainNode);
-            source.start();
-            secondaryNodes.push(filter);
-        } else if (name === 'wind') {
-            source = this.createBrownNoiseNode();
-            const filter = this.ctx.createBiquadFilter();
-            filter.type = 'bandpass';
-            filter.frequency.setValueAtTime(400, this.ctx.currentTime);
-            filter.Q.setValueAtTime(2.0, this.ctx.currentTime);
-
-            const lfo = this.ctx.createOscillator();
-            lfo.frequency.setValueAtTime(0.08, this.ctx.currentTime);
-
-            const lfoGain = this.ctx.createGain();
-            lfoGain.gain.setValueAtTime(250, this.ctx.currentTime);
-
-            lfo.connect(lfoGain);
-            lfoGain.connect(filter.frequency);
-
-            source.connect(filter);
-            filter.connect(gainNode);
-
-            source.start();
-            lfo.start();
-
-            secondaryNodes.push(filter, lfo, lfoGain);
+        if (['rain', 'rain_muffled', 'fire', 'forest', 'brown', 'wind', 'ocean'].includes(name)) {
+            const buf = this.focusBuffers?.[name];
+            if (!buf) { gainNode.disconnect(); return; }
+            source = this.ctx.createBufferSource();
+            source.buffer = buf;
+            source.loop = true;
+            // Skip fade-in at start and fade-out at end for seamless looping
+            const fadePad = Math.min(2.0, buf.duration * 0.08);
+            source.loopStart = fadePad;
+            source.loopEnd = buf.duration - fadePad;
+            source.connect(gainNode);
+            source.start(0, fadePad);
         } else if (name === 'plane') {
             source = this.createBrownNoiseNode();
             const filter = this.ctx.createBiquadFilter();
@@ -260,81 +260,6 @@ class FocusAudioEngine {
             osc2.start();
 
             secondaryNodes.push(filter, osc1, osc1Gain, osc2, osc2Gain);
-        } else if (name === 'brown') {
-            source = this.createBrownNoiseNode();
-            source.connect(gainNode);
-            source.start();
-        } else if (name === 'fire') {
-            // Crackling fire: brown noise through narrow bandpass + amplitude modulation
-            source = this.createBrownNoiseNode();
-            const fireLp = this.ctx.createBiquadFilter();
-            fireLp.type = 'bandpass';
-            fireLp.frequency.setValueAtTime(600, this.ctx.currentTime);
-            fireLp.Q.setValueAtTime(1.2, this.ctx.currentTime);
-            // Crackle modulation
-            const crackleNoise = this.createWhiteNoiseNode();
-            const crackleGain = this.ctx.createGain();
-            crackleGain.gain.setValueAtTime(0.35, this.ctx.currentTime);
-            const crackleFilter = this.ctx.createBiquadFilter();
-            crackleFilter.type = 'highpass';
-            crackleFilter.frequency.setValueAtTime(3000, this.ctx.currentTime);
-            crackleNoise.connect(crackleFilter);
-            crackleFilter.connect(crackleGain);
-            crackleGain.connect(gainNode);
-            crackleNoise.start();
-            source.connect(fireLp);
-            fireLp.connect(gainNode);
-            source.start();
-            secondaryNodes.push(fireLp, crackleNoise, crackleFilter, crackleGain);
-        } else if (name === 'forest') {
-            // Forest: layered filtered noises — a gentle bed with intermittent high chirps
-            source = this.createBrownNoiseNode();
-            const forestBed = this.ctx.createBiquadFilter();
-            forestBed.type = 'bandpass';
-            forestBed.frequency.setValueAtTime(300, this.ctx.currentTime);
-            forestBed.Q.setValueAtTime(0.6, this.ctx.currentTime);
-            source.connect(forestBed);
-            forestBed.connect(gainNode);
-            // Bird-like chirps layer
-            const chirpNoise = this.createWhiteNoiseNode();
-            const chirpBp = this.ctx.createBiquadFilter();
-            chirpBp.type = 'bandpass';
-            chirpBp.frequency.setValueAtTime(4000, this.ctx.currentTime);
-            chirpBp.Q.setValueAtTime(8, this.ctx.currentTime);
-            const chirpGain = this.ctx.createGain();
-            chirpGain.gain.setValueAtTime(0.06, this.ctx.currentTime);
-            // Slow amplitude modulation for chirp
-            const chirpLfo = this.ctx.createOscillator();
-            chirpLfo.frequency.setValueAtTime(0.15, this.ctx.currentTime);
-            const chirpLfoGain = this.ctx.createGain();
-            chirpLfoGain.gain.setValueAtTime(0.04, this.ctx.currentTime);
-            chirpLfo.connect(chirpLfoGain);
-            chirpLfoGain.connect(chirpGain.gain);
-            chirpNoise.connect(chirpBp);
-            chirpBp.connect(chirpGain);
-            chirpGain.connect(gainNode);
-            source.start();
-            chirpNoise.start();
-            chirpLfo.start();
-            secondaryNodes.push(forestBed, chirpNoise, chirpBp, chirpGain, chirpLfo, chirpLfoGain);
-        } else if (name === 'stream') {
-            // Bubbling stream: white noise filtered + slight modulation
-            source = this.createWhiteNoiseNode();
-            const streamBp = this.ctx.createBiquadFilter();
-            streamBp.type = 'bandpass';
-            streamBp.frequency.setValueAtTime(1200, this.ctx.currentTime);
-            streamBp.Q.setValueAtTime(1.5, this.ctx.currentTime);
-            const streamLfo = this.ctx.createOscillator();
-            streamLfo.frequency.setValueAtTime(0.3, this.ctx.currentTime);
-            const streamLfoGain = this.ctx.createGain();
-            streamLfoGain.gain.setValueAtTime(400, this.ctx.currentTime);
-            streamLfo.connect(streamLfoGain);
-            streamLfoGain.connect(streamBp.frequency);
-            source.connect(streamBp);
-            streamBp.connect(gainNode);
-            source.start();
-            streamLfo.start();
-            secondaryNodes.push(streamBp, streamLfo, streamLfoGain);
         }
 
         sound.nodes = { source, gainNode, secondaryNodes };
