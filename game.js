@@ -2391,14 +2391,17 @@ function setupRaceUI() {
 
 /** Show/hide user card during focus work phase (mobile only) */
 function setMobileFocusMode(active) {
-    const card   = document.getElementById('user-card');
-    const logout = document.getElementById('logout-btn');
+    const card     = document.getElementById('user-card');
+    const logout   = document.getElementById('logout-btn');
+    const joystick = document.getElementById('mobile-joystick');
     if (active && isMobile()) {
-        if (card)   card.classList.add('focus-hidden');
-        if (logout) logout.classList.add('focus-hidden');
+        if (card)     card.classList.add('focus-hidden');
+        if (logout)   logout.classList.add('focus-hidden');
+        if (joystick) joystick.classList.add('focus-hidden');
     } else {
-        if (card)   card.classList.remove('focus-hidden');
-        if (logout) logout.classList.remove('focus-hidden');
+        if (card)     card.classList.remove('focus-hidden');
+        if (logout)   logout.classList.remove('focus-hidden');
+        if (joystick) joystick.classList.remove('focus-hidden');
     }
 }
 
@@ -7258,16 +7261,29 @@ function setupSpGatherPanel() {
 
     renderSpGatherPanel(gameState.sharedPomo.session || { participants: {} });
 
-    // Config option buttons
+    // Config option buttons — clicking a preset clears the custom input
     ['sp-cfg-work-opts','sp-cfg-break-opts','sp-cfg-sess-opts'].forEach(id => {
-        document.getElementById(id)?.querySelectorAll('.sp-opt').forEach(btn => {
+        const container = document.getElementById(id);
+        if (!container) return;
+        const btns = container.querySelectorAll('.sp-opt');
+        const inp  = container.querySelector('.sp-cfg-input');
+        btns.forEach(btn => {
             btn.addEventListener('click', () => {
-                document.getElementById(id)?.querySelectorAll('.sp-opt').forEach(b => b.classList.remove('active'));
+                btns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                const inp = document.getElementById(id)?.querySelector('.sp-cfg-input');
                 if (inp) inp.value = '';
             });
         });
+        // Typing in custom input deselects presets; clearing it restores first preset
+        if (inp) {
+            inp.addEventListener('input', () => {
+                if (inp.value) {
+                    btns.forEach(b => b.classList.remove('active'));
+                } else {
+                    btns[0]?.classList.add('active');
+                }
+            });
+        }
     });
 
     // Start button — clone to avoid stacked listeners
@@ -7351,7 +7367,7 @@ function renderSpGatherPanel(session) {
     if (startBtn) {
         const hasReady = parts.some(([, p]) => p.status === 'ready');
         startBtn.disabled = !hasReady;
-        startBtn.textContent = hasReady ? 'انا لها 🚀' : 'انتظر المشاركين…';
+        startBtn.textContent = hasReady ? 'نحن لها 🚀' : 'انتظر المشاركين…';
     }
 }
 
@@ -7383,7 +7399,7 @@ function startSharedPomoSession() {
     if (!sp.isHost || !sp.sessionId) return;
     const workMins  = spGetCfgVal('sp-cfg-work-opts',  'sp-cfg-work',  25);
     const breakMins = spGetCfgVal('sp-cfg-break-opts', 'sp-cfg-break', 5);
-    const sessions  = spGetCfgVal('sp-cfg-sess-opts',  null,            1);
+    const sessions  = spGetCfgVal('sp-cfg-sess-opts',  'sp-cfg-sess',   1);
     const startTime = serverNow();
     const endTime   = startTime + workMins * 60000;
 
@@ -7564,23 +7580,101 @@ function cleanupSpLocal(clearGroup = false) {
     document.getElementById('sp-join-panel')?.classList.add('hidden');
 }
 
+// Called when our live doc disappears (host left). Promotes a remaining guest to
+// host or falls back to solo if everyone else is gone too.
+function handleHostLeft() {
+    const sp = gameState.sharedPomo;
+    if (sp.phase !== 'active') return;
+
+    const departedHostId = sp.sessionId;
+    const remaining = sp.activeGroupMembers.filter(uid => uid !== departedHostId);
+
+    if (remaining.length < 2) {
+        // We're alone — drop shared state but keep the pomo running
+        sp.phase = 'idle';
+        sp.sessionId = null;
+        sp.isHost = false;
+        sp.activeGroupMembers = [];
+        sp.coopAnim.members = {};
+        sp.coopAnim.emojiFloats = [];
+        document.getElementById('sp-coop-tasks')?.classList.add('hidden');
+        showSpInfoToast('المضيف غادر — تكمل بمفردك');
+        return;
+    }
+
+    // All remaining guests sort the list the same way → same new host chosen everywhere
+    const newHostId = [...remaining].sort()[0];
+    sp.activeGroupMembers = remaining;
+
+    if (newHostId === gameState.userId) {
+        // Promote self — write a new live doc so new joiners can find us
+        sp.isHost    = true;
+        sp.sessionId = gameState.userId;
+
+        // Clear stale solo-upgrade watcher if somehow still set
+        if (sp.unsubSoloUpgrade) { sp.unsubSoloUpgrade(); sp.unsubSoloUpgrade = null; }
+
+        const local = gameState.players[gameState.userId];
+        const liveDoc = {
+            hostId:       gameState.userId,
+            hostName:     local?.username  || '',
+            hostLaptopId: gameState.pomodoro.laptopId,
+            endTime:      gameState.pomodoro.endTime,
+            workDuration:  gameState.pomodoro.workDuration,
+            breakDuration: gameState.pomodoro.breakDuration || 5,
+            sessionsLeft:  gameState.pomodoro.sessionsLeft  || 1,
+            participants: Object.fromEntries(
+                remaining.map(uid => {
+                    const p = gameState.players[uid];
+                    return [uid, { username: p?.username || uid, avatar: p?.avatar || null }];
+                })
+            ),
+        };
+        update(ref(database), { [spPath(`live/${gameState.userId}`)]: liveDoc });
+        setupSpLiveListener(gameState.userId);
+        showSpInfoToast('أصبحت مضيف الجلسة');
+    } else {
+        // Re-point at the new host's live doc
+        sp.isHost    = false;
+        sp.sessionId = newHostId;
+        setupSpLiveListener(newHostId);
+    }
+}
+
 // Listen to the live doc so late joiners appear in all members' activeGroupMembers
 function setupSpLiveListener(hostId) {
     const sp = gameState.sharedPomo;
     if (sp.unsubLive) { sp.unsubLive(); sp.unsubLive = null; }
     sp.unsubLive = onValue(ref(database, spPath(`live/${hostId}`)), snap => {
         const data = snap.val();
-        if (!data) return; // host deleted it — session over, nothing to do
+        if (!data) {
+            // Live doc deleted — host may have left; hand off to remaining members
+            if (sp.phase === 'active') handleHostLeft();
+            return;
+        }
         const uids = Object.keys(data.participants || {});
         if (!uids.length) return;
-        // Add any UIDs we don't know about yet
+        const uidsSet = new Set(uids);
+
+        // Remove members who left (no longer in live doc participants)
         let changed = false;
+        sp.activeGroupMembers = sp.activeGroupMembers.filter(uid => {
+            if (!uidsSet.has(uid)) {
+                delete sp.coopAnim.members[uid]; // stop animating them
+                changed = true;
+                return false;
+            }
+            return true;
+        });
+
+        // Add any UIDs we don't know about yet (late joiners)
         for (const uid of uids) {
             if (!sp.activeGroupMembers.includes(uid)) {
                 sp.activeGroupMembers.push(uid);
                 changed = true;
             }
         }
+
         // Init animation state for newly discovered members
         if (changed) {
             for (const uid of sp.activeGroupMembers) {
@@ -7920,7 +8014,7 @@ function drawCoopGroupLabels() {
     }
 
     for (const members of Object.values(groups)) {
-        if (!members.length) continue;
+        if (members.length < 2) continue; // need ≥2 to call it a group
 
         // Average draw position — deliberately ignore coop dance offsets so the
         // label stays anchored above the static badge box, not bobbing with sprites.
@@ -7968,8 +8062,8 @@ function updateCoopTaskPanel() {
     const panel = document.getElementById('sp-coop-tasks');
     if (!panel) return;
 
-    // Show only to HOST during active work phase
-    const shouldShow = sp.isHost && sp.phase === 'active' && sp.activeGroupMembers.length > 1
+    // Show to any member (host or guest) during active work phase
+    const shouldShow = sp.phase === 'active' && sp.activeGroupMembers.length > 1
         && gameState.pomodoro.active && gameState.pomodoro.phase === 'work';
 
     if (!shouldShow) { panel.classList.add('hidden'); return; }
@@ -7979,8 +8073,7 @@ function updateCoopTaskPanel() {
     const mm = String(Math.floor(remaining / 60000)).padStart(2, '0');
     const ss = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
 
-    let html = `<button id="sp-coop-leave" class="sp-coop-leave-btn" title="مغادرة الجلسة">✕</button>`;
-    html += `<div class="sp-coop-timer">${mm}:${ss}</div>`;
+    let html = `<div class="sp-coop-timer">${mm}:${ss}</div>`;
     for (const uid of sp.activeGroupMembers) {
         const player = gameState.players[uid];
         if (!player) continue;
@@ -7991,9 +8084,6 @@ function updateCoopTaskPanel() {
         </div>`;
     }
     panel.innerHTML = html;
-    document.getElementById('sp-coop-leave')?.addEventListener('click', () => {
-        leaveSharedPomo();
-    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -8091,13 +8181,15 @@ function initPrayerSystem() {
     // Delay slightly to let AudioContext initialize first
     setTimeout(_preloadAthan, 2000);
 
-    // On mobile, move YT + prayer panel inside the focus drawer for proper scrolling
+    // On mobile, move prayer panel + YT inside the focus drawer for proper scrolling.
+    // Prayer panel comes first so it's visible as soon as the drawer opens,
+    // YT block comes after (scroll down to reach it).
     if (isMobile()) {
         const drawer = document.getElementById('focus-sounds-panel');
         const yt = document.getElementById('yt-focus-block');
         const pp = document.getElementById('prayer-panel');
-        if (drawer && yt) drawer.appendChild(yt);
         if (drawer && pp) drawer.appendChild(pp);
+        if (drawer && yt) drawer.appendChild(yt);
     }
 
     // Read location from Firebase (city + country only)

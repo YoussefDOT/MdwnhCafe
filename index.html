@@ -236,6 +236,7 @@
                     <button class="sp-opt active" data-val="1">1</button>
                     <button class="sp-opt" data-val="2">2</button>
                     <button class="sp-opt" data-val="3">3</button>
+                    <input id="sp-cfg-sess" type="number" class="sp-cfg-input" placeholder="مخصص" min="1" max="20">
                 </div>
             </div>
         </div>
@@ -256,9 +257,7 @@
     </div>
 
     <!-- Coop task panel: shown to host during active shared session -->
-    <div id="sp-coop-tasks" class="sp-coop-tasks hidden">
-        <button id="sp-coop-leave" class="sp-coop-leave-btn" title="مغادرة الجلسة">✕</button>
-    </div>
+    <div id="sp-coop-tasks" class="sp-coop-tasks hidden"></div>
 
     <!-- Mid-session join panel: shown to free players near an active coop session -->
     <div id="sp-join-panel" class="sp-join-panel hidden">

@@ -1512,6 +1512,12 @@ body {
     -webkit-user-select: none;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
     will-change: transform;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+body.is-mobile .mobile-joystick.focus-hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(24px);
 }
 
 .joystick-knob {
@@ -1713,13 +1719,14 @@ body.is-mobile .focus-sounds-panel {
     left: 0 !important;
     right: 0 !important;
     width: 100% !important;
-    max-height: 78vh;
+    max-height: 82vh;
     border-radius: 20px 20px 0 0 !important;
-    transform: translateY(calc(100% - 72px)) !important;
-    padding: 0 16px 24px !important;
+    transform: translateY(calc(100% - 72px));
+    padding: 0 16px 16px !important;
     overflow: hidden;
     flex-direction: column !important;
     align-items: stretch !important;
+    gap: 10px !important;
     transition: transform 0.38s cubic-bezier(0.34, 1.4, 0.64, 1) !important;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -1729,7 +1736,7 @@ body.is-mobile .focus-sounds-panel {
 
 /* When hidden on mobile, fully off-screen */
 body.is-mobile .focus-sounds-panel:not(.active) {
-    transform: translateY(110%) !important;
+    transform: translateY(110%);
     pointer-events: none !important;
     opacity: 0 !important;
 }
@@ -1738,19 +1745,16 @@ body.is-mobile .focus-sounds-panel:not(.active) {
 body.is-mobile .focus-sounds-panel.active {
     opacity: 1 !important;
     pointer-events: all !important;
-    transform: translateY(calc(100% - 72px)) !important;
+    transform: translateY(calc(100% - 72px));
 }
 
 /* When fully open */
 body.is-mobile .focus-sounds-panel.active.drawer-open {
-    transform: translateY(0) !important;
+    transform: translateY(0);
 }
 
-/* Drawer contents scroll container */
-body.is-mobile .focus-sounds-panel .panel-header-row,
-body.is-mobile .focus-sounds-panel .sound-controls {
-    flex-shrink: 0;
-}
+/* All direct children must NOT shrink — the drawer scrolls instead of squishing */
+body.is-mobile .focus-sounds-panel > * { flex-shrink: 0; }
 
 /* On mobile the YT block is part of the drawer, not fixed */
 body.is-mobile .focus-sounds-panel .yt-focus-block {
@@ -1762,9 +1766,24 @@ body.is-mobile .focus-sounds-panel .yt-focus-block {
     opacity: 1 !important;
     pointer-events: all !important;
     border-radius: 12px !important;
-    margin-top: 4px;
+    margin-top: 0;
     display: flex; flex-direction: column;
 }
+
+/* ── Compact sound rows on mobile ── */
+body.is-mobile .sound-item {
+    padding: 5px 8px;
+    gap: 8px;
+}
+body.is-mobile .sound-toggle-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+body.is-mobile .sound-toggle-btn svg { width: 13px; height: 13px; }
+body.is-mobile .sound-name { font-size: 0.74rem; }
+body.is-mobile .sound-vol { width: 60px; }
 
 /* Task panel on mobile: center bottom above drawer handle */
 body.is-mobile .current-task-panel {
@@ -2201,17 +2220,6 @@ body.is-mobile:has(#focus-sounds-panel.active) .sp-coop-tasks {
     max-width: 140px;
 }
 
-.sp-coop-leave-btn {
-    position: absolute;
-    top: 8px; right: 8px;
-    background: none; border: none;
-    color: rgba(255,255,255,0.25);
-    font-size: 0.75rem; cursor: pointer;
-    padding: 2px 5px; line-height: 1;
-    border-radius: 50%; transition: color 0.15s, background 0.15s;
-}
-.sp-coop-leave-btn:hover { color: rgba(255,100,100,0.8); background: rgba(255,60,60,0.1); }
-
 /* ── Mid-session join panel ── */
 .sp-join-panel.hidden        { display: none; }
 .sp-join-details.hidden      { display: none; }
@@ -2345,10 +2353,11 @@ body.is-mobile .sp-nearby.hidden { transform: translateX(-6px); }
 body.is-mobile .sp-gather,
 body.is-mobile .sp-guest-wait { bottom: 100px; width: calc(100vw - 32px); max-width: 360px; }
 body.is-mobile .sp-invite-toast { right: 12px; left: 12px; width: auto; bottom: 100px; }
-body.is-mobile .sp-coop-tasks { right: 12px; bottom: 100px; max-width: calc(100vw - 24px); }
+body.is-mobile .sp-coop-tasks { display: none !important; }
 body.is-mobile .sp-join-panel { left: 12px; width: calc(100vw - 24px); max-width: 220px; top: auto; bottom: 170px; transform: none; }
-body.is-mobile .pomo-leave-btn { top: 50px; left: 14px; }
-body.is-mobile .pomo-leave-confirm { top: 85px; left: 14px; }
+/* On mobile the large timer is top:16px + ~99px tall — push leave btn below it */
+body.is-mobile .pomo-leave-btn { top: 124px; left: 14px; }
+body.is-mobile .pomo-leave-confirm { top: 162px; left: 14px; }
 
 /* ═══════════════════════════════════════════════════════
    PRAYER TIMES PANEL
@@ -2744,9 +2753,17 @@ body.is-mobile .prayer-panel {
     transform: none !important; opacity: 1 !important;
     pointer-events: all !important;
     border-radius: 12px !important;
-    margin-top: 4px;
+    margin-top: 0;
     box-shadow: none;
+    flex-shrink: 0;    /* never compress regardless of YT block size */
+    overflow: visible; /* don't clip prayer icons/names */
 }
+/* Larger prayer item labels so all 5 names are legible */
+body.is-mobile .prayer-arabic { font-size: 0.68rem; }
+body.is-mobile .prayer-item-time { font-size: 0.6rem; }
+body.is-mobile .prayer-icon-circle { width: 30px; height: 30px; }
+body.is-mobile .prayer-icons-row { max-height: 100px; }
+
 body.is-mobile .yt-focus-block { bottom: auto !important; }
 body.is-mobile .prayer-overlay-name { font-size: 1.3rem; }
 body.is-mobile .prayer-overlay-btn { padding: 14px 28px; font-size: 0.9rem; }
