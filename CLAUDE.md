@@ -39,9 +39,9 @@ A multiplayer collaborative Pomodoro workspace — players appear as avatars in 
 ## File Map
 
 ```
-game.js        ~8800 lines  — all game logic, classes, Firebase, rendering
-index.html       ~660 lines  — single page; all panels/overlays live here
-style.css       ~2800 lines  — all styling; mobile rules under body.is-mobile
+game.js        ~9800 lines  — all game logic, classes, Firebase, rendering
+index.html       ~670 lines  — single page; all panels/overlays live here
+style.css       ~3000 lines  — all styling; mobile rules under body.is-mobile
 firebase-config.js           — exports { database, ref, onValue, update, get, onDisconnect, set }
 Sound/                       — UI/minigame sound effects (.mp3)
 Sound/Focus Sounds/          — ambient focus audio files (.mp3)
@@ -123,6 +123,53 @@ The HTML `<div class="sound-item" data-sound="KEY">` must match the key in `this
 **`ctx.resume()` is async — await it before playing.** The AudioContext can be suspended in background tabs. Calling `ctx.resume()` without awaiting it and then immediately scheduling nodes causes silent failures. Always chain: `ctx.resume().then(_doPlay)`. The `playEffect()` method already does this — never rewrite it to fire-and-forget.
 
 **Background-tab fast path**: `startKidnapAnimation` already handles `document.hidden` (skips animation, teleports instantly). For timed delays before kidnap (like the 2-second post-break wait), use `setTimeout` — it fires in background tabs (with some throttling). Store the timer ID in `fm._breakEndTimer` and clear it in `endFreeMode` to prevent orphaned timers.
+
+### Ambient sound loading (mobile-safe)
+`loadFocusSoundBuffers()` loads all 7 MP3s **in parallel** via `Promise.all`. Each buffer starts the sound immediately after its own decode finishes — do not rewrite this as sequential (`for...await`), which blocks all sounds behind the slowest file on mobile.
+
+After each buffer resolves, the code checks `sound.active && !sound.nodes && ctx.state === 'running'` and calls `startSound()` if true. This handles the race where the user toggles a sound before its buffer arrives.
+
+**Loading indicator**: `toggle()` adds `.sound-loading` to the `.sound-item` element when the buffer isn't ready yet (`focusBuffers[name] == null`). `loadFocusSoundBuffers()` removes it when the buffer lands. CSS pulses the button so the user knows it's loading, not broken.
+
+**`visibilitychange` restart rule**: The handler only tears down and restarts nodes when `ctx.state === 'suspended'`. If the context is already running, sounds are still playing — do NOT restart them (that resets the loop position). The old pattern of calling `doRestart()` unconditionally in the `else` branch was wrong and caused audible loop resets on every tab switch.
+
+**`resumeCtx` restart rule**: The `click`/`keydown` handler that resumes the AudioContext on first gesture also scans for active sounds with `!sound.nodes` and starts them. This fixes the fresh-reload case where `startSound()` failed silently because the context was suspended during `applyState()`.
+
+---
+
+## YouTube Focus Player
+
+### Ad detection & muting
+YouTube embeds cannot remove ads. Instead, `FocusYouTubePlayer` detects pre-roll ads and mutes + overlays them.
+
+**Detection heuristic** (in `_poll()`, runs every 500ms):
+1. 2-second grace period after `loadUrl()` — both ads and legitimate video start at `currentTime ≈ 0`.
+2. After grace period, while `getPlayerState() === PLAYING`:
+   - If `getCurrentTime() < -0.1` → ad (some YouTube versions return negative time during pre-roll).
+   - If `getCurrentTime()` delta between polls is `< 0.05s` for 2.5s+ → time is frozen while "playing" → ad.
+3. Ad clears when `getCurrentTime() > 1` and neither condition is true.
+4. 120-second failsafe force-clears stuck state.
+
+**State fields** added to constructor: `_isAdPlaying`, `_adStartMs`, `_loadedAt`, `_lastCurrentTime`, `_stuckStartMs`, `_adWaveAnimId`.
+
+**`_setAdMode(isAd)`**: called by `_poll()`. On ad start: `player.setVolume(0)`, shows `#yt-ad-overlay`, picks a random SVG icon, starts `_startAdWave()`. On ad end: restores `player.setVolume(this.volume)`, hides overlay, resets `_lastCurrentTime = -999` for a clean comparison.
+
+**`_startAdWave()` / `_stopAdWave()`**: rAF loop that draws animated golden bar waveform on `#yt-ad-waveform` canvas and updates `#yt-ad-time` with elapsed seconds. Separate from the main video waveform.
+
+**HTML**: `#yt-ad-overlay` is a direct child of `#mini-yt-player`, positioned `absolute inset:0 z-index:10`. Contains `#yt-ad-icon-wrap`, `.yt-ad-label`, `#yt-ad-waveform`, `#yt-ad-time`.
+
+**`loadUrl()` resets**: every new URL load resets `_loadedAt = Date.now()`, clears `_isAdPlaying`, removes `.active` from the overlay, and calls `_stopAdWave()`.
+
+### `FocusYouTubePlayer` key methods
+| Method | Purpose |
+|---|---|
+| `loadUrl(url, startSec, saveToFirebase, startPaused)` | Parse ID, create player if needed, load/cue video, start poll |
+| `fadeOutAndPause(duration)` | Gradual volume→0 then pause (used when break starts) |
+| `fadeInAndResume(duration)` | Set vol=0, play, ramp up (used when work resumes) |
+| `_poll()` | 500ms interval: update time display, waveform, ad detection |
+| `_setAdMode(isAd)` | Mute/unmute + show/hide ad overlay |
+| `_ensureUiVisible(visible)` | Show/hide `#mini-yt-player` and update thumbnail src |
+| `loadFromProfile(profile)` | Restore saved URL+timestamp+loop from Firebase on login |
 
 ---
 
@@ -238,6 +285,12 @@ Sugar falls from top. `progress = (serverNow() - spawnTime) / fallDuration` — 
 | Coop task panel hidden for guests | `shouldShow` required `sp.isHost` | Remove host check — show for all `sp.phase === 'active'` members |
 | Ghost movement snappy | Raw Firebase value applied directly | Lerp `displayX` toward `mugX` each frame in `updateCoffeeMode` |
 | Lobby stays visible after Siraj spawn | `startGame` only removes `login-screen` | Explicitly remove `active` from `lobby-screen` in `spawnSirajGhost` |
+| Focus sounds silent on fresh page load | `startSound()` fails silently when context suspended (no gesture yet); no retry when buffer later loads | `resumeCtx` click handler rescans `active && !nodes` after resume; `loadFocusSoundBuffers` calls `startSound` per-key after decode |
+| Focus sound loop resets on every tab switch | `visibilitychange` called `doRestart()` unconditionally even when context was running | Only restart when `ctx.state === 'suspended'`; running context means sounds are still alive |
+| Login card animation replays on bot pings | `onValue` for `users` fires on every user status change, re-renders whole list | Hash visible users (`uid:username:active:avatar`); skip render if key unchanged |
+| YouTube ad plays silently with no indication | No ad detection; pre-roll shows video metadata while playing ad audio | Detect via frozen `currentTime`; mute player + show `#yt-ad-overlay` with animated waveform |
+| `.sound-loading` never cleared if toggled before buffer ready | `loadFocusSoundBuffers` had no hook to start deferred active sounds | After each `decodeAudioData`, remove `.sound-loading` and call `startSound()` if active |
+| Prayer gradient glow stretched on mobile portrait | `ellipse` radial gradients designed for landscape look like ovals on narrow screens | `body.is-mobile .prayer-overlay-bg::after { display: none }` |
 
 ---
 
@@ -251,6 +304,8 @@ Sugar falls from top. `progress = (serverNow() - spawnTime) / fallDuration` — 
 - **Pills**: `border-radius: 50px` for action buttons
 - **Colors**: dark theme, no bright whites, accent `rgba(255,255,255,0.85)`
 - **Arabic text**: always RTL-compatible; use `direction: rtl` where needed
+
+**Exception — success/end card** (`.success-content`): uses **white background + dark text** (`#fff` bg, `#555`/`#666`/`#888` inline text). This is intentional — it's the "old white UI" the user prefers for the session-complete screen. Do not apply dark glass to `.success-content`.
 
 ---
 
