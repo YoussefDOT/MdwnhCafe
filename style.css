@@ -338,6 +338,15 @@ body {
     animation: popInBouncy 0.48s cubic-bezier(0.34,1.56,0.64,1) forwards;
 }
 
+/* End/success card uses the old white UI style */
+.success-content {
+    background: #ffffff;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: rgba(0,0,0,0.07);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.24);
+}
+
 .modal-content h3 {
     margin-bottom: 10px;
     font-size: 1.45rem;
@@ -2782,34 +2791,37 @@ body.game-ready #prayer-panel { display: flex !important; flex-direction: column
     100% { opacity: 1; transform: scale(1.05); }
 }
 
-/* Fajr — vivid sunrise yellow */
+/* Fajr — pre-dawn: deep blue zenith fading to warm gold at horizon */
 .prayer-overlay[data-prayer="fajr"] .prayer-overlay-bg {
-    background: linear-gradient(160deg, #0e0b00 0%, #201500 35%, #342209 70%, #1c1000 100%);
+    background: linear-gradient(175deg, #03061a 0%, #080d22 25%, #110b18 55%, #1c1000 80%, #201500 100%);
 }
 .prayer-overlay[data-prayer="fajr"] .prayer-overlay-bg::after {
-    background: radial-gradient(ellipse at 50% 15%, rgba(255,220,50,0.48) 0%, transparent 52%),
-                radial-gradient(ellipse at 30% 65%, rgba(230,155,40,0.22) 0%, transparent 45%),
-                radial-gradient(ellipse at 70% 80%, rgba(200,120,20,0.12) 0%, transparent 40%);
+    background: radial-gradient(ellipse at 50% 95%, rgba(255,215,50,0.52) 0%, transparent 42%),
+                radial-gradient(ellipse at 50% 55%, rgba(220,160,60,0.18) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 15%, rgba(30,55,200,0.28) 0%, transparent 55%),
+                radial-gradient(ellipse at 25% 30%, rgba(100,80,200,0.10) 0%, transparent 45%);
 }
 
-/* Asr — bright sandy beige, warm afternoon */
+/* Asr — warm blue afternoon sky, golden sun low but sky still blue */
 .prayer-overlay[data-prayer="asr"] .prayer-overlay-bg {
-    background: linear-gradient(145deg, #0e0c07 0%, #1c1809 45%, #150f05 100%);
+    background: linear-gradient(155deg, #040e22 0%, #071830 35%, #0e1a20 60%, #14100a 85%, #1a1100 100%);
 }
 .prayer-overlay[data-prayer="asr"] .prayer-overlay-bg::after {
-    background: radial-gradient(ellipse at 55% 28%, rgba(215,180,110,0.40) 0%, transparent 55%),
-                radial-gradient(ellipse at 20% 78%, rgba(190,155,85,0.20) 0%, transparent 48%),
-                radial-gradient(ellipse at 75% 65%, rgba(170,130,60,0.12) 0%, transparent 42%);
+    background: radial-gradient(ellipse at 60% 85%, rgba(255,185,55,0.44) 0%, transparent 40%),
+                radial-gradient(ellipse at 35% 25%, rgba(55,130,230,0.28) 0%, transparent 55%),
+                radial-gradient(ellipse at 65% 35%, rgba(80,155,220,0.14) 0%, transparent 45%),
+                radial-gradient(ellipse at 50% 55%, rgba(180,140,60,0.10) 0%, transparent 50%);
 }
 
-/* Maghrib — golden hour amber, warm sunset */
+/* Maghrib — deep sunset: purple/violet zenith, orange horizon, rose mid-sky */
 .prayer-overlay[data-prayer="maghrib"] .prayer-overlay-bg {
-    background: linear-gradient(140deg, #0f0600 0%, #1e0c00 40%, #180a10 80%, #0e0412 100%);
+    background: linear-gradient(148deg, #0d0318 0%, #1a0520 35%, #260a18 60%, #200800 82%, #160400 100%);
 }
 .prayer-overlay[data-prayer="maghrib"] .prayer-overlay-bg::after {
-    background: radial-gradient(ellipse at 62% 20%, rgba(255,165,30,0.46) 0%, transparent 45%),
-                radial-gradient(ellipse at 30% 65%, rgba(210,100,25,0.24) 0%, transparent 55%),
-                radial-gradient(ellipse at 50% 48%, rgba(160,55,80,0.14) 0%, transparent 60%);
+    background: radial-gradient(ellipse at 58% 92%, rgba(255,130,20,0.52) 0%, transparent 38%),
+                radial-gradient(ellipse at 40% 60%, rgba(220,60,140,0.24) 0%, transparent 50%),
+                radial-gradient(ellipse at 30% 25%, rgba(150,30,200,0.22) 0%, transparent 48%),
+                radial-gradient(ellipse at 65% 40%, rgba(240,90,60,0.14) 0%, transparent 45%);
 }
 
 /* Isha — deep dark blue, stars */
@@ -2866,12 +2878,12 @@ body.game-ready #prayer-panel { display: flex !important; flex-direction: column
 }
 
 /* Prayer-specific fog tints */
-.prayer-overlay[data-prayer="fajr"]    .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 40% 50%, rgba(255,220,60,0.13) 0%, transparent 60%); }
-.prayer-overlay[data-prayer="fajr"]    .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 60% 55%, rgba(220,160,40,0.10) 0%, transparent 55%); }
-.prayer-overlay[data-prayer="asr"]     .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 40% 50%, rgba(210,175,100,0.13) 0%, transparent 60%); }
-.prayer-overlay[data-prayer="asr"]     .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 60% 55%, rgba(185,150,75,0.10) 0%, transparent 55%); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 40% 50%, rgba(245,150,35,0.13) 0%, transparent 60%); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 60% 55%, rgba(190,80,30,0.10) 0%, transparent 55%); }
+.prayer-overlay[data-prayer="fajr"]    .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 40% 80%, rgba(255,215,50,0.14) 0%, transparent 55%); }
+.prayer-overlay[data-prayer="fajr"]    .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 55% 20%, rgba(60,80,220,0.12) 0%, transparent 50%); }
+.prayer-overlay[data-prayer="asr"]     .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 55% 80%, rgba(255,180,50,0.14) 0%, transparent 55%); }
+.prayer-overlay[data-prayer="asr"]     .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 40% 25%, rgba(60,140,230,0.12) 0%, transparent 50%); }
+.prayer-overlay[data-prayer="maghrib"] .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 55% 85%, rgba(255,120,30,0.14) 0%, transparent 55%); }
+.prayer-overlay[data-prayer="maghrib"] .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 35% 35%, rgba(190,40,180,0.12) 0%, transparent 50%); }
 .prayer-overlay[data-prayer="isha"]    .prayer-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 40% 50%, rgba(30,60,180,0.07) 0%, transparent 60%); }
 .prayer-overlay[data-prayer="isha"]    .prayer-fog-layer:nth-child(2) { background: radial-gradient(ellipse at 60% 55%, rgba(10,20,100,0.06) 0%, transparent 55%); }
 .prayer-overlay-content {
@@ -2894,55 +2906,57 @@ body.game-ready #prayer-panel { display: flex !important; flex-direction: column
     text-align: center; letter-spacing: -0.01em;
 }
 .prayer-overlay-btn {
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    background: rgba(59,185,171,0.2);
-    border: 1px solid rgba(59,185,171,0.3);
-    border-radius: 16px;
-    padding: 16px 36px;
-    color: rgba(255,255,255,0.5);
-    font-family: inherit; font-size: 1rem; font-weight: 700;
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.14);
+    border-radius: 50px;
+    padding: 18px 48px;
+    color: rgba(255,255,255,0.38);
+    font-family: inherit; font-size: 1.05rem; font-weight: 700;
+    letter-spacing: 0.01em;
     cursor: not-allowed;
-    transition: background 0.3s, color 0.3s, border-color 0.3s, transform 0.2s, box-shadow 0.3s;
+    transition: background 0.3s, color 0.3s, border-color 0.3s, transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s;
 }
-.prayer-overlay-btn:disabled { opacity: 0.7; }
+.prayer-overlay-btn:disabled { opacity: 0.65; }
 .prayer-overlay-btn.unlocked {
-    cursor: pointer; color: white;
-    background: rgba(59,185,171,0.55);
-    border-color: rgba(59,185,171,0.6);
-    box-shadow: 0 4px 30px rgba(59,185,171,0.25);
+    cursor: pointer; color: #fff;
+    background: rgba(59,185,171,0.52);
+    border-color: rgba(59,185,171,0.65);
+    box-shadow: 0 6px 32px rgba(59,185,171,0.28), 0 2px 8px rgba(0,0,0,0.25);
 }
-.prayer-overlay-btn.unlocked:hover { background: rgba(59,185,171,0.7); transform: scale(1.03); }
+.prayer-overlay-btn.unlocked:hover {
+    background: rgba(59,185,171,0.68);
+    transform: scale(1.04) translateY(-1px);
+    box-shadow: 0 10px 40px rgba(59,185,171,0.38), 0 4px 12px rgba(0,0,0,0.28);
+}
 .prayer-overlay-btn.unlocked:active { transform: scale(0.97); }
 .prayer-overlay-timer {
-    font-size: 0.78rem; font-weight: 600;
-    color: rgba(255,255,255,0.35);
+    font-size: 0.75rem; font-weight: 600;
+    color: rgba(255,255,255,0.28);
     font-variant-numeric: tabular-nums;
 }
 .prayer-overlay-btn.unlocked .prayer-overlay-timer { display: none; }
 
 /* ── Per-prayer icon + button accent colors ── */
-/* Fajr — warm yellow */
-.prayer-overlay[data-prayer="fajr"] .prayer-overlay-icon { background: rgba(255,210,50,0.14); border-color: rgba(255,210,50,0.30); }
-.prayer-overlay[data-prayer="fajr"] .prayer-overlay-icon svg { color: rgba(255,215,60,0.90); }
-.prayer-overlay[data-prayer="fajr"] .prayer-overlay-btn { background: rgba(255,210,50,0.18); border-color: rgba(255,210,50,0.30); }
-.prayer-overlay[data-prayer="fajr"] .prayer-overlay-btn.unlocked { background: rgba(255,210,50,0.50); border-color: rgba(255,215,60,0.65); box-shadow: 0 4px 30px rgba(255,210,50,0.25); }
-.prayer-overlay[data-prayer="fajr"] .prayer-overlay-btn.unlocked:hover { background: rgba(255,210,50,0.68); }
+/* Fajr — blue-gold: icon takes the blue zenith, button takes gold horizon */
+.prayer-overlay[data-prayer="fajr"] .prayer-overlay-icon { background: rgba(60,80,210,0.16); border-color: rgba(100,120,240,0.30); }
+.prayer-overlay[data-prayer="fajr"] .prayer-overlay-icon svg { color: rgba(130,160,255,0.90); }
+.prayer-overlay[data-prayer="fajr"] .prayer-overlay-btn.unlocked { background: rgba(255,210,50,0.48); border-color: rgba(255,215,60,0.65); box-shadow: 0 6px 32px rgba(255,210,50,0.28), 0 2px 8px rgba(0,0,0,0.25); }
+.prayer-overlay[data-prayer="fajr"] .prayer-overlay-btn.unlocked:hover { background: rgba(255,210,50,0.65); }
 
 /* Dhuhr — teal (default, already matches) */
 
-/* Asr — sandy gold */
-.prayer-overlay[data-prayer="asr"] .prayer-overlay-icon { background: rgba(210,175,100,0.15); border-color: rgba(210,175,100,0.30); }
-.prayer-overlay[data-prayer="asr"] .prayer-overlay-icon svg { color: rgba(215,180,110,0.90); }
-.prayer-overlay[data-prayer="asr"] .prayer-overlay-btn { background: rgba(210,175,100,0.18); border-color: rgba(210,175,100,0.30); }
-.prayer-overlay[data-prayer="asr"] .prayer-overlay-btn.unlocked { background: rgba(210,175,100,0.50); border-color: rgba(215,180,110,0.65); box-shadow: 0 4px 30px rgba(210,175,100,0.25); }
-.prayer-overlay[data-prayer="asr"] .prayer-overlay-btn.unlocked:hover { background: rgba(210,175,100,0.68); }
+/* Asr — warm blue: icon sky blue, button golden sun */
+.prayer-overlay[data-prayer="asr"] .prayer-overlay-icon { background: rgba(55,130,225,0.16); border-color: rgba(80,155,240,0.30); }
+.prayer-overlay[data-prayer="asr"] .prayer-overlay-icon svg { color: rgba(110,175,255,0.90); }
+.prayer-overlay[data-prayer="asr"] .prayer-overlay-btn.unlocked { background: rgba(255,180,50,0.48); border-color: rgba(255,190,60,0.65); box-shadow: 0 6px 32px rgba(255,180,50,0.28), 0 2px 8px rgba(0,0,0,0.25); }
+.prayer-overlay[data-prayer="asr"] .prayer-overlay-btn.unlocked:hover { background: rgba(255,180,50,0.65); }
 
-/* Maghrib — golden amber */
-.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-icon { background: rgba(255,160,30,0.15); border-color: rgba(255,165,40,0.32); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-icon svg { color: rgba(255,170,40,0.90); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-btn { background: rgba(255,160,30,0.18); border-color: rgba(255,165,40,0.32); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-btn.unlocked { background: rgba(255,160,30,0.50); border-color: rgba(255,170,40,0.65); box-shadow: 0 4px 30px rgba(255,160,30,0.25); }
-.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-btn.unlocked:hover { background: rgba(255,160,30,0.68); }
+/* Maghrib — violet-rose: icon purple, button warm rose-orange */
+.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-icon { background: rgba(160,30,200,0.16); border-color: rgba(190,60,220,0.32); }
+.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-icon svg { color: rgba(210,110,255,0.90); }
+.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-btn.unlocked { background: rgba(220,60,140,0.48); border-color: rgba(240,80,160,0.65); box-shadow: 0 6px 32px rgba(220,60,140,0.28), 0 2px 8px rgba(0,0,0,0.25); }
+.prayer-overlay[data-prayer="maghrib"] .prayer-overlay-btn.unlocked:hover { background: rgba(220,60,140,0.65); }
 
 /* Isha — soft indigo/blue */
 .prayer-overlay[data-prayer="isha"] .prayer-overlay-icon { background: rgba(100,120,220,0.15); border-color: rgba(100,120,220,0.28); }

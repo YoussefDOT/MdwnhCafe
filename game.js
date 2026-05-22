@@ -102,7 +102,12 @@ class FocusAudioEngine {
 
         const resumeCtx = () => {
             if (this.ctx && this.ctx.state === 'suspended') {
-                this.ctx.resume().catch(e => {});
+                this.ctx.resume().then(() => {
+                    // Start any active sounds that couldn't launch while context was suspended
+                    for (const [name, sound] of Object.entries(this.sounds)) {
+                        if (sound.active && !sound.nodes) this.startSound(name);
+                    }
+                }).catch(e => {});
             }
         };
         document.addEventListener('click', resumeCtx);
@@ -113,27 +118,24 @@ class FocusAudioEngine {
         // then restart any ambient sounds whose source nodes may have been killed.
         document.addEventListener('visibilitychange', () => {
             if (document.hidden || !this.ctx) return;
-            const doRestart = () => {
-                for (const [name, sound] of Object.entries(this.sounds)) {
-                    if (!sound.active) continue;
-                    if (sound.nodes) {
-                        // Tear down stale nodes (may be dead after long suspension)
-                        try { sound.nodes.source?.stop(); } catch(e) {}
-                        try { sound.nodes.gainNode?.disconnect(); } catch(e) {}
-                        sound.nodes.secondaryNodes?.forEach(n => {
-                            try { n.stop(); } catch(e) {}
-                            try { n.disconnect(); } catch(e) {}
-                        });
-                        sound.nodes = null;
-                    }
-                    this.startSound(name);
-                }
-            };
+            // Only restart sounds if the context was actually suspended (long background tab).
+            // If it's already running, sounds are still playing — restarting would reset the loop.
             if (this.ctx.state === 'suspended') {
-                this.ctx.resume().then(doRestart).catch(e => {});
-            } else {
-                // Context already running but nodes may still be dead
-                doRestart();
+                this.ctx.resume().then(() => {
+                    for (const [name, sound] of Object.entries(this.sounds)) {
+                        if (!sound.active) continue;
+                        if (sound.nodes) {
+                            try { sound.nodes.source?.stop(); } catch(e) {}
+                            try { sound.nodes.gainNode?.disconnect(); } catch(e) {}
+                            sound.nodes.secondaryNodes?.forEach(n => {
+                                try { n.stop(); } catch(e) {}
+                                try { n.disconnect(); } catch(e) {}
+                            });
+                            sound.nodes = null;
+                        }
+                        this.startSound(name);
+                    }
+                }).catch(e => {});
             }
         });
     }
@@ -1846,31 +1848,34 @@ function setupUserSelection() {
     const userListContainer = document.getElementById('user-list');
     const usersRef = ref(database, 'users');
 
-    // The category name the player is allowed to see
     const allowedCategory = LOBBY_CONFIG[gameState.selectedLobby]?.categoryName;
 
-    // Show spinner immediately while waiting for Firebase
     userListContainer.innerHTML = '<div class="loading-spinner"></div>';
     let firstRender = true;
+    let prevUsersKey = null;
 
     onValue(usersRef, (snapshot) => {
         const users = snapshot.val();
         if (gameState.userId) return;
 
+        const onlineUsers = users
+            ? Object.entries(users).filter(([_, data]) =>
+                data.status === 'in-voice' && data.categoryName === allowedCategory)
+            : [];
+
+        // Skip re-render + animation replay if the visible list hasn't changed
+        const newKey = onlineUsers.map(([uid, d]) =>
+            `${uid}:${d.username}:${d.activeInGame ? 1 : 0}:${d.avatar || ''}`
+        ).join('|');
+
+        if (!firstRender && newKey === prevUsersKey) return;
+        prevUsersKey = newKey;
+
         const renderUsers = () => {
-            if (!users) {
-                userListContainer.innerHTML = '<div class="loading-users">لا يوجد مستخدمون متصلون حالياً.</div>';
-                return;
-            }
-
-            // Filter: only in-voice AND in the selected lobby's category
-            const onlineUsers = Object.entries(users).filter(([_, data]) =>
-                data.status === 'in-voice' &&
-                data.categoryName === allowedCategory
-            );
-
             if (onlineUsers.length === 0) {
-                userListContainer.innerHTML = '<div class="loading-users">لا يوجد مستخدمون في قنوات الصوت حالياً.</div>';
+                userListContainer.innerHTML = '<div class="loading-users">' +
+                    (users ? 'لا يوجد مستخدمون في قنوات الصوت حالياً.' : 'لا يوجد مستخدمون متصلون حالياً.') +
+                    '</div>';
                 return;
             }
             userListContainer.innerHTML = '';
@@ -1901,7 +1906,6 @@ function setupUserSelection() {
 
         if (firstRender) {
             firstRender = false;
-            // Small delay so the login card entrance animation settles before cards appear
             setTimeout(renderUsers, 200);
         } else {
             renderUsers();
@@ -8199,10 +8203,10 @@ function endFreeMode() {
     const local = gameState.players[gameState.userId];
     updatePlayerPosition(local?.x || 0, local?.y || 0);
 
-    showFreeModeSuccessModal(totalMins);
+    showFreeModeSuccessModal(totalMins, getCurrentTaskText());
 }
 
-function showFreeModeSuccessModal(totalMins) {
+function showFreeModeSuccessModal(totalMins, taskText = '') {
     const modal = document.getElementById('success-modal');
     if (!modal) return;
 
@@ -8210,6 +8214,13 @@ function showFreeModeSuccessModal(totalMins) {
 
     const sessRow = document.getElementById('success-sessions-count')?.parentElement;
     if (sessRow) sessRow.style.display = 'none';
+
+    const taskEl = document.getElementById('success-task');
+    if (taskEl) {
+        const cleanTask = taskText.trim();
+        taskEl.textContent = cleanTask ? `عملت على ${cleanTask}` : '';
+        taskEl.style.display = cleanTask ? 'block' : 'none';
+    }
 
     const localPlayer = gameState.players[gameState.userId];
     const nameEl      = document.getElementById('success-name');
@@ -8231,6 +8242,7 @@ function showFreeModeSuccessModal(totalMins) {
     document.getElementById('success-close').onclick = () => {
         modal.classList.remove('active');
         if (sessRow) sessRow.style.display = '';
+        if (taskEl) taskEl.style.display = 'none';
     };
 
     if (gameState.focusAudioEngine) {
