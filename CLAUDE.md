@@ -120,6 +120,8 @@ The HTML `<div class="sound-item" data-sound="KEY">` must match the key in `this
 
 **Sounds must work in background tabs.** Use `focusAudioEngine.playEffect('key')` (Web Audio API) rather than `playSoundRobust(gameState.sounds.X)` (HTMLAudioElement) for any sound that must fire when the tab is not focused — e.g., session transitions (TimeReturn), kidnap sounds, prayer calls. HTMLAudioElement playback can be throttled/blocked by the browser in background tabs; Web Audio nodes play regardless.
 
+**`ctx.resume()` is async — await it before playing.** The AudioContext can be suspended in background tabs. Calling `ctx.resume()` without awaiting it and then immediately scheduling nodes causes silent failures. Always chain: `ctx.resume().then(_doPlay)`. The `playEffect()` method already does this — never rewrite it to fire-and-forget.
+
 **Background-tab fast path**: `startKidnapAnimation` already handles `document.hidden` (skips animation, teleports instantly). For timed delays before kidnap (like the 2-second post-break wait), use `setTimeout` — it fires in background tabs (with some throttling). Store the timer ID in `fm._breakEndTimer` and clear it in `endFreeMode` to prevent orphaned timers.
 
 ---

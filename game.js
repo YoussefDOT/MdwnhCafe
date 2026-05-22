@@ -76,6 +76,8 @@ class FocusAudioEngine {
             kidnap: null,
             yipee: null,
             breakAdded: null,
+            inviteSent: null,
+            inviteAccepted: null,
         };
         this.focusBuffers = {
             rain: null,
@@ -100,14 +102,40 @@ class FocusAudioEngine {
 
         const resumeCtx = () => {
             if (this.ctx && this.ctx.state === 'suspended') {
-                this.ctx.resume().then(() => {
-                    document.removeEventListener('click', resumeCtx);
-                    document.removeEventListener('keydown', resumeCtx);
-                }).catch(e => {});
+                this.ctx.resume().catch(e => {});
             }
         };
         document.addEventListener('click', resumeCtx);
         document.addEventListener('keydown', resumeCtx);
+
+        // When the user tabs back after an extended background period the browser
+        // suspends the AudioContext. Resume it immediately on visibility restore,
+        // then restart any ambient sounds whose source nodes may have been killed.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden || !this.ctx) return;
+            const doRestart = () => {
+                for (const [name, sound] of Object.entries(this.sounds)) {
+                    if (!sound.active) continue;
+                    if (sound.nodes) {
+                        // Tear down stale nodes (may be dead after long suspension)
+                        try { sound.nodes.source?.stop(); } catch(e) {}
+                        try { sound.nodes.gainNode?.disconnect(); } catch(e) {}
+                        sound.nodes.secondaryNodes?.forEach(n => {
+                            try { n.stop(); } catch(e) {}
+                            try { n.disconnect(); } catch(e) {}
+                        });
+                        sound.nodes = null;
+                    }
+                    this.startSound(name);
+                }
+            };
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume().then(doRestart).catch(e => {});
+            } else {
+                // Context already running but nodes may still be dead
+                doRestart();
+            }
+        });
     }
 
     async loadSoundEffects() {
@@ -117,11 +145,13 @@ class FocusAudioEngine {
                 const arrayBuffer = await response.arrayBuffer();
                 return await this.ctx.decodeAudioData(arrayBuffer);
             };
-            this.buffers.timeBreak  = await loadBuffer('Sound/TimeBreak.mp3');
-            this.buffers.timeReturn = await loadBuffer('Sound/TimeReturn.mp3');
-            this.buffers.kidnap     = await loadBuffer('Sound/LaptopGrab.mp3');
-            this.buffers.yipee      = await loadBuffer('Sound/Yipee.mp3');
-            this.buffers.breakAdded = await loadBuffer('Sound/BreakAdded.mp3');
+            this.buffers.timeBreak      = await loadBuffer('Sound/TimeBreak.mp3');
+            this.buffers.timeReturn     = await loadBuffer('Sound/TimeReturn.mp3');
+            this.buffers.kidnap         = await loadBuffer('Sound/LaptopGrab.mp3');
+            this.buffers.yipee          = await loadBuffer('Sound/Yipee.mp3');
+            this.buffers.breakAdded     = await loadBuffer('Sound/BreakAdded.mp3');
+            this.buffers.inviteSent     = await loadBuffer('Sound/Invite_Sent.mp3');
+            this.buffers.inviteAccepted = await loadBuffer('Sound/Invite_Accepted.mp3');
         } catch(e) {
             console.log("Failed to load Web Audio sound effects:", e);
         }
@@ -150,31 +180,37 @@ class FocusAudioEngine {
 
     playEffect(name) {
         if (!this.ctx) this.init();
+        const _doPlay = () => {
+            const buffer = this.buffers[name];
+            if (!buffer) {
+                if (gameState.sounds[name]) {
+                    gameState.sounds[name].pause();
+                    gameState.sounds[name].currentTime = 0;
+                    gameState.sounds[name].play().catch(e=>{});
+                }
+                return;
+            }
+            try {
+                const source = this.ctx.createBufferSource();
+                source.buffer = buffer;
+                const gainNode = this.ctx.createGain();
+                gainNode.gain.setValueAtTime(0.8, this.ctx.currentTime);
+                source.connect(gainNode);
+                gainNode.connect(this.ctx.destination);
+                source.start();
+            } catch(err) {
+                console.log("Web Audio effect play failed, using fallback:", err);
+                if (gameState.sounds[name]) gameState.sounds[name].play().catch(e=>{});
+            }
+        };
+        // Must resume ctx BEFORE scheduling nodes — ctx.resume() is async,
+        // so we chain _doPlay in .then() to guarantee the context is running
         if (this.ctx.state === 'suspended') {
-            this.ctx.resume().catch(e=>{});
-        }
-        const buffer = this.buffers[name];
-        if (!buffer) {
-            if (gameState.sounds[name]) {
-                gameState.sounds[name].pause();
-                gameState.sounds[name].currentTime = 0;
-                gameState.sounds[name].play().catch(e=>{});
-            }
-            return;
-        }
-        try {
-            const source = this.ctx.createBufferSource();
-            source.buffer = buffer;
-            const gainNode = this.ctx.createGain();
-            gainNode.gain.setValueAtTime(0.8, this.ctx.currentTime);
-            source.connect(gainNode);
-            gainNode.connect(this.ctx.destination);
-            source.start();
-        } catch(err) {
-            console.log("Web Audio effect play failed, using fallback:", err);
-            if (gameState.sounds[name]) {
-                gameState.sounds[name].play().catch(e=>{});
-            }
+            this.ctx.resume().then(_doPlay).catch(() => {
+                if (gameState.sounds[name]) gameState.sounds[name].play().catch(e=>{});
+            });
+        } else {
+            _doPlay();
         }
     }
 
@@ -337,16 +373,20 @@ class FocusAudioEngine {
 
     fadeToMaster(targetVolume, duration) {
         if (!this.ctx) this.init();
+        const _doFade = () => {
+            const targetGain = targetVolume * this.overallVolume;
+            try {
+                this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
+                this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, this.ctx.currentTime);
+                this.masterGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + duration);
+            } catch (e) {
+                this.masterGain.gain.value = targetGain;
+            }
+        };
         if (this.ctx.state === 'suspended') {
-            this.ctx.resume().catch(e=>{});
-        }
-        const targetGain = targetVolume * this.overallVolume;
-        try {
-            this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
-            this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, this.ctx.currentTime);
-            this.masterGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + duration);
-        } catch (e) {
-            this.masterGain.gain.value = targetGain;
+            this.ctx.resume().then(_doFade).catch(e => {});
+        } else {
+            _doFade();
         }
     }
 
@@ -567,6 +607,22 @@ class FocusYouTubePlayer {
         this._fading = false;
     }
 
+    async fadeInAndResume(duration = 1500) {
+        await this._ytReady;
+        if (!this.player) return;
+        this._fading = true;
+        const target = this.volume;
+        try { this.player.setVolume(0); this.player.playVideo(); this._startPoll(); } catch(e){}
+        const steps = 12;
+        const stepTime = duration / steps;
+        for (let i = 1; i <= steps; i++) {
+            await new Promise(r => setTimeout(r, stepTime));
+            try { this.player.setVolume(Math.round(target * (i / steps))); } catch(e){}
+        }
+        try { this.player.setVolume(target); } catch(e){}
+        this._fading = false;
+    }
+
     _startPoll() {
         if (this.pollInterval) return;
         this.pollInterval = setInterval(() => this._poll(), 500);
@@ -740,6 +796,8 @@ const gameState = {
         minigameCoffeeTimerClose: new Audio('Sound/Minigame_Coffee_TimerClose.mp3'),
         minigameApplause:        new Audio('Sound/Minigame_Aplause.mp3'),
         prayerCall:              new Audio('Sound/Prayer_CallToPrayer.mp3'),
+        inviteSent:              new Audio('Sound/Invite_Sent.mp3'),
+        inviteAccepted:          new Audio('Sound/Invite_Accepted.mp3'),
     },
     canvas: null,
     ctx: null,
@@ -914,6 +972,8 @@ gameState.sounds.minigameCoffeeBad.preload       = 'auto';
 gameState.sounds.minigameCoffeeTimerClose.preload = 'auto';
 gameState.sounds.minigameApplause.preload        = 'auto';
 gameState.sounds.prayerCall.preload              = 'auto';
+gameState.sounds.inviteSent.preload              = 'auto';
+gameState.sounds.inviteAccepted.preload          = 'auto';
 
 // Constants
 const COLORS = {
@@ -4161,7 +4221,8 @@ function render() {
 
     const ytBlock = document.getElementById('yt-focus-block');
     if (ytBlock) {
-        const shouldShow = gameState.isLockedIn;
+        const shouldShow = (gameState.pomodoro.active && gameState.pomodoro.phase === 'work')
+            || (gameState.freeMode.active && gameState.freeMode.phase === 'work');
         ytBlock.classList.toggle('visible', shouldShow);
     }
     const prayerPanel = document.getElementById('prayer-panel');
@@ -6905,11 +6966,12 @@ function checkNearbyCoopSession() {
     // No coop session — hide stale coop panel
     if (sp.nearbyCoopId) { sp.nearbyCoopId = ''; document.getElementById('sp-join-panel')?.classList.add('hidden'); }
 
-    // ── Solo workers (can be converted to shared) ─────────────────────────────
+    // ── Solo workers (can be converted to shared pomo) ────────────────────────
     let bestSoloId = null; bestDist = Infinity;
     for (const p of Object.values(gameState.players)) {
         if (p.userId === gameState.userId) continue;
-        if (!p.isWorking || p.coopHostId) continue; // solo = working but NOT in a coop group
+        // Free mode workers are excluded — shared free mode join is not supported
+        if (!p.isWorking || p.coopHostId || p.inFreeMode) continue;
         const dx = p.x - local.x, dy = p.y - local.y;
         const d = dx*dx + dy*dy;
         if (d < SP_PROXIMITY_SQ && d < bestDist) { bestDist = d; bestSoloId = p.userId; }
@@ -7340,6 +7402,9 @@ function acceptSpInvite() {
     if (!invite) return;
     hideSpToast();
 
+    // Guest hears accepted sound immediately
+    if (gameState.focusAudioEngine) gameState.focusAudioEngine.playEffect('inviteAccepted');
+
     // If we were hosting a gathering, cleanly cancel it first
     if (sp.isHost && sp.sessionId && sp.phase === 'gathering') {
         update(ref(database), { [spPath(`sessions/${sp.sessionId}`)]: null });
@@ -7473,9 +7538,14 @@ function renderSpGatherPanel(session) {
         if (existingChips[uid]) {
             // Update status classes on existing chip
             const chip = existingChips[uid];
+            const wasPending = chip.classList.contains('sp-chip-pending');
             chip.classList.toggle('sp-chip-pending', !ready);
             chip.querySelector('.sp-member-av')?.classList.toggle('sp-av-ready', ready);
             chip.querySelector('.sp-member-dot')?.classList.toggle('sp-dot-ready', ready);
+            // Host hears accepted sound when a guest transitions from pending → ready
+            if (wasPending && ready && gameState.focusAudioEngine) {
+                gameState.focusAudioEngine.playEffect('inviteAccepted');
+            }
         } else {
             // New chip — enter animation
             const chip = document.createElement('div');
@@ -7506,13 +7576,11 @@ function renderSpGatherPanel(session) {
 
     // Update start / free-mode buttons
     const startBtn = document.getElementById('sp-start-btn');
-    const freeBtn  = document.getElementById('sp-free-btn');
     const hasReady = parts.some(([, p]) => p.status === 'ready');
     if (startBtn) {
         startBtn.disabled = !hasReady;
         startBtn.textContent = hasReady ? 'نحن لها 🚀' : 'انتظر المشاركين…';
     }
-    if (freeBtn) freeBtn.disabled = !hasReady;
 }
 
 // ── Guest waiting panel ───────────────────────────────────────────────────────
@@ -7598,20 +7666,16 @@ function launchSharedPomoWork(session) {
 
     // ── Free mode shared session ──────────────────────────────────────────────
     if (session.mode === 'free') {
+        // Guests no longer join shared free mode sessions (feature removed — too unstable).
+        // Only the host enters free mode from this path.
+        if (!sp.isHost) return;
         const hostId = session.hostId || sp.sessionId;
-        // Host uses the pre-selected laptop; guests find their own nearest free laptop
-        startFreeMode(sp.isHost ? laptop.id : null, true);
-        if (sp.isHost) {
-            // Host: update the live doc with mode flag + free phase
-            update(ref(database), {
-                [spPath(`live/${hostId}/freePhase`)]: 'work',
-                [spPath(`live/${hostId}/freeStartTime`)]: Date.now(),
-            });
-            setTimeout(() => {
-                update(ref(database), { [spPath(`sessions/${sp.sessionId}`)]: null });
-            }, 12000);
-        }
-        setupSpLiveListener(hostId);
+        startFreeMode(laptop.id, false); // solo free mode only
+        // Clean up the gather session doc
+        setTimeout(() => {
+            update(ref(database), { [spPath(`sessions/${sp.sessionId}`)]: null });
+        }, 3000);
+        cleanupSpLocal(false); // clear shared pomo state, keep pomo unaffected
         return;
     }
 
@@ -7930,8 +7994,8 @@ function _startFreeModeWork() {
     // was left at 0 from prayer overlay or previous session teardown
     if (gameState.focusAudioEngine) gameState.focusAudioEngine.fadeToMaster(1.0, 0.8);
 
-    // Resume YouTube player if one was active (paused on break start)
-    if (gameState.focusYTPlayer?.videoId) gameState.focusYTPlayer.resume();
+    // Fade in and resume YouTube player (was faded out on break start)
+    if (gameState.focusYTPlayer?.videoId) gameState.focusYTPlayer.fadeInAndResume(1500);
 }
 
 function updateFreeMode() {
@@ -8019,8 +8083,8 @@ function startFreeModeBreak(durationMins) {
 
     updatePomoLeaveBtn();
 
-    // Pause YouTube player during break
-    if (gameState.focusYTPlayer?.videoId) gameState.focusYTPlayer.pause();
+    // Fade out and pause YouTube player during break
+    if (gameState.focusYTPlayer?.videoId) gameState.focusYTPlayer.fadeOutAndPause(1500);
 
     if (gameState.focusAudioEngine) {
         gameState.focusAudioEngine.playEffect('breakAdded');
@@ -8171,12 +8235,9 @@ function setupFreeModeUI() {
         });
     }
 
+    // Shared free mode join is disabled — hide the button entirely
     const spFreeBtn = document.getElementById('sp-free-btn');
-    if (spFreeBtn) {
-        const fresh = spFreeBtn.cloneNode(true);
-        spFreeBtn.replaceWith(fresh);
-        fresh.addEventListener('click', () => { if (!fresh.disabled) startSharedFreeModeSession(); });
-    }
+    if (spFreeBtn) spFreeBtn.style.display = 'none';
 
     document.getElementById('free-break-yes-btn')?.addEventListener('click', () => {
         document.getElementById('free-break-prompt')?.classList.add('hidden');
@@ -8267,6 +8328,9 @@ function showSpToast(invite) {
     if (nameEl) nameEl.textContent = invite.fromName || '';
 
     toast.classList.remove('hidden');
+
+    // Invite notification sound — Web Audio so it works in background tabs
+    if (gameState.focusAudioEngine) gameState.focusAudioEngine.playEffect('inviteSent');
 
     // Animate progress bar
     const bar = document.getElementById('sp-toast-bar');
@@ -8375,23 +8439,37 @@ function setupPomoLeaveBtn() {
     });
 }
 
+let _leaveBtnLastText = '';
+let _leaveBtnLastVisible = null;
+
 function updatePomoLeaveBtn() {
     const wrap = document.getElementById('leave-wrap');
     const btn  = document.getElementById('pomo-leave-btn');
     if (!wrap || !btn) return;
+
+    let newText, shouldShow;
     if (gameState.freeMode.active) {
-        btn.textContent = 'انهاء الجلسة';
-        wrap.classList.remove('leave-wrap-hidden');
-        return;
+        newText    = 'انهاء الجلسة';
+        shouldShow = true;
+    } else {
+        newText    = 'مغادرة الجلسة';
+        shouldShow = !!(gameState.pomodoro.active &&
+            (gameState.isLockedIn || gameState.pomodoro.phase === 'break'));
     }
-    btn.textContent = 'مغادرة الجلسة';
-    const active = gameState.pomodoro.active &&
-        (gameState.isLockedIn || gameState.pomodoro.phase === 'break');
-    wrap.classList.toggle('leave-wrap-hidden', !active);
-    // Hide confirm panels when wrapper hides
-    if (!active) {
-        document.getElementById('pomo-leave-confirm1')?.classList.add('pomo-leave-confirm-hidden');
-        document.getElementById('pomo-leave-confirm2')?.classList.add('pomo-leave-confirm-hidden');
+
+    // Only write to DOM when state actually changes — avoids 60fps mutations
+    // that interfere with click event delivery
+    if (newText !== _leaveBtnLastText) {
+        btn.textContent = newText;
+        _leaveBtnLastText = newText;
+    }
+    if (shouldShow !== _leaveBtnLastVisible) {
+        wrap.classList.toggle('leave-wrap-hidden', !shouldShow);
+        if (!shouldShow) {
+            document.getElementById('pomo-leave-confirm1')?.classList.add('pomo-leave-confirm-hidden');
+            document.getElementById('pomo-leave-confirm2')?.classList.add('pomo-leave-confirm-hidden');
+        }
+        _leaveBtnLastVisible = shouldShow;
     }
 }
 
@@ -8859,6 +8937,7 @@ async function fetchPrayerTimes() {
             }
             gameState.prayer.lastFetchDate = dateStr;
             computeNextPrayer();
+            _lastPrayerPanelUpdate = 0; // force tickPrayerPanel to recompute on very next frame
             updatePrayerPanelDOM();
         }
     } catch (e) {
