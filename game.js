@@ -3739,6 +3739,9 @@ function doLogout() {
                 .then(() => window.location.reload())
                 .catch(() => window.location.reload());
         } else {
+            if (gameState.freeMode.active && gameState.freeMode.laptopId != null) {
+                update(ref(database), { [lobbyPath(`pomodoro/${gameState.freeMode.laptopId}`)]: null });
+            }
             set(ref(database, `users/${gameState.userId}/activeInGame`), false)
                 .then(() => window.location.reload())
                 .catch(() => window.location.reload());
@@ -3956,7 +3959,10 @@ function handleMovement() {
 
 function updateWindParticles() {
     // Lerp wind speed and focus fog opacity
-    const isFocused = gameState.isLockedIn && gameState.pomodoro.active && gameState.pomodoro.phase === 'work';
+    const isFocused = gameState.isLockedIn && (
+        (gameState.pomodoro.active && gameState.pomodoro.phase === 'work') ||
+        (gameState.freeMode.active && gameState.freeMode.phase === 'work')
+    );
     const targetWindSpeed = isFocused ? 0.15 : 1.0;
     const targetFogAlpha = isFocused ? 1.0 : 0.0;
 
@@ -7049,10 +7055,10 @@ function updateSharedPomoProximity() {
     const sp = gameState.sharedPomo;
     // When hosting a gathering, keep showing nearby players so more can be invited
     const hostIsGathering = sp.phase === 'gathering' && sp.isHost;
-    if ((!hostIsGathering && sp.phase !== 'idle') || gameState.pomodoro.active) {
+    if ((!hostIsGathering && sp.phase !== 'idle') || gameState.pomodoro.active || gameState.freeMode.active) {
         renderSpNearbyPanel([]);
         // Still detect nearby coop sessions even when not idle for join flow
-        if (!gameState.pomodoro.active) checkNearbyCoopSession();
+        if (!gameState.pomodoro.active && !gameState.freeMode.active) checkNearbyCoopSession();
         return;
     }
     const local = gameState.players[gameState.userId];
@@ -7084,7 +7090,7 @@ function updateSharedPomoProximity() {
 
 function checkNearbyCoopSession() {
     const sp = gameState.sharedPomo;
-    if (sp.phase !== 'idle' || gameState.pomodoro.active) {
+    if (sp.phase !== 'idle' || gameState.pomodoro.active || gameState.freeMode.active) {
         if (sp.nearbyCoopId)  { sp.nearbyCoopId  = ''; document.getElementById('sp-join-panel')?.classList.add('hidden'); }
         if (sp.nearbySoloId)  { sp.nearbySoloId  = ''; }
         return;
@@ -8285,6 +8291,7 @@ function endFreeMode() {
 
     // Cancel pending post-break kidnap if session ends during 2-second wait
     if (fm._breakEndTimer) { clearTimeout(fm._breakEndTimer); fm._breakEndTimer = null; }
+    if (gameState.focusYTPlayer?.videoId) gameState.focusYTPlayer.fadeOutAndPause(1000);
 
     let totalMs = fm.totalWorkMs;
     if (fm.phase === 'work' && fm.workStartTime > 0) totalMs += Date.now() - fm.workStartTime;
