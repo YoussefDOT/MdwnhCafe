@@ -679,32 +679,40 @@ class FocusYouTubePlayer {
 
             // ── Ad detection ──────────────────────────────────────────
             const now = Date.now();
-            const inGrace = now - (this._loadedAt || 0) < 2000;
-            // Mobile: YouTube often reports BUFFERING (3) during ads, not just PLAYING (1)
-            const isActive = state === 1 || state === 3;
-            if (isActive && !inGrace) {
-                const adByNegative = cur < -0.1;
-                // currentTime frozen for 1.2s+ while active → ad (lower threshold catches short ads)
-                let adByStuck = false;
-                if (this._lastCurrentTime > -900) {
+            const inGrace = now - (this._loadedAt || 0) < 2500;
+            const isActive = state === 1 || state === 3; // PLAYING or BUFFERING
+            if (!inGrace) {
+                let isAd = false;
+                // M1: undocumented YouTube state -2 means ad is playing
+                if (state === -2) isAd = true;
+                // M2: some YouTube versions return negative time during pre-roll
+                if (!isAd && cur < -0.1) isAd = true;
+                // M3: playing video_id differs from what we loaded → pre-roll ad video
+                if (!isAd && isActive) {
+                    try {
+                        const vd = this.player.getVideoData();
+                        if (vd && vd.video_id && vd.video_id !== this.videoId) isAd = true;
+                    } catch(e) {}
+                }
+                // M4: currentTime genuinely frozen (some mobile/bumper ad edge cases)
+                if (!isAd && isActive && this._lastCurrentTime > -900) {
                     if (Math.abs(cur - this._lastCurrentTime) < 0.05) {
                         if (!this._stuckStartMs) this._stuckStartMs = now;
-                        adByStuck = now - this._stuckStartMs > 1200;
+                        if (now - this._stuckStartMs > 1200) isAd = true;
                     } else {
                         this._stuckStartMs = 0;
                     }
                 }
-                if ((adByNegative || adByStuck) && !this._isAdPlaying) {
+                if (isAd && !this._isAdPlaying) {
                     this._setAdMode(true);
-                } else if (!adByNegative && !adByStuck && this._isAdPlaying && cur > 1) {
+                } else if (!isAd && this._isAdPlaying && cur > 0.5) {
                     this._setAdMode(false);
                 }
                 if (this._isAdPlaying && this._adStartMs && now - this._adStartMs > 120000) {
                     this._setAdMode(false);
                 }
-                this._lastCurrentTime = cur;
+                if (isActive) this._lastCurrentTime = cur;
             } else if (state === 2 || state === 0 || state === -1) {
-                // Reset only on genuine pause/end/unstarted — not on buffering
                 this._stuckStartMs = 0;
             }
             // ──────────────────────────────────────────────────────────
