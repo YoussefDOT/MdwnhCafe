@@ -14,7 +14,7 @@ python3 -m http.server 8080
 
 **Mobile testing:** `ipconfig getifaddr en0` → open `http://[IP]:8080` on phone (same WiFi).
 
-**Never push to git unless the user explicitly asks.** Always test on localhost first.
+**Never push to git unless the user explicitly asks.** Always test on localhost first. **Always push directly to `main`** — never push to a separate branch (`git push origin HEAD:main`).
 
 ---
 
