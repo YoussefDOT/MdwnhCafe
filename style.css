@@ -976,9 +976,11 @@ body {
     border: 3px solid rgba(255,255,255,0.10);
     border-top-color: rgba(255,200,30,0.88);
     border-radius: 50%;
+    -webkit-animation: ytAdSpin 0.75s linear infinite;
     animation: ytAdSpin 0.75s linear infinite;
     will-change: transform;
 }
+@-webkit-keyframes ytAdSpin { to { -webkit-transform: rotate(360deg); transform: rotate(360deg); } }
 @keyframes ytAdSpin { to { transform: rotate(360deg); } }
 .yt-ad-label {
     font-size: 12px; font-weight: 600;

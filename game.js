@@ -680,15 +680,16 @@ class FocusYouTubePlayer {
             // ── Ad detection ──────────────────────────────────────────
             const now = Date.now();
             const inGrace = now - (this._loadedAt || 0) < 2000;
-            if (isPlaying && !inGrace) {
-                // Negative currentTime is a known YouTube indicator of pre-roll ad
+            // Mobile: YouTube often reports BUFFERING (3) during ads, not just PLAYING (1)
+            const isActive = state === 1 || state === 3;
+            if (isActive && !inGrace) {
                 const adByNegative = cur < -0.1;
-                // currentTime frozen at same value for 2.5s+ while player says PLAYING → ad
+                // currentTime frozen for 1.2s+ while active → ad (lower threshold catches short ads)
                 let adByStuck = false;
                 if (this._lastCurrentTime > -900) {
                     if (Math.abs(cur - this._lastCurrentTime) < 0.05) {
                         if (!this._stuckStartMs) this._stuckStartMs = now;
-                        adByStuck = now - this._stuckStartMs > 2500;
+                        adByStuck = now - this._stuckStartMs > 1200;
                     } else {
                         this._stuckStartMs = 0;
                     }
@@ -698,12 +699,12 @@ class FocusYouTubePlayer {
                 } else if (!adByNegative && !adByStuck && this._isAdPlaying && cur > 1) {
                     this._setAdMode(false);
                 }
-                // Failsafe: clear after 120s max
                 if (this._isAdPlaying && this._adStartMs && now - this._adStartMs > 120000) {
                     this._setAdMode(false);
                 }
                 this._lastCurrentTime = cur;
-            } else if (!isPlaying) {
+            } else if (state === 2 || state === 0 || state === -1) {
+                // Reset only on genuine pause/end/unstarted — not on buffering
                 this._stuckStartMs = 0;
             }
             // ──────────────────────────────────────────────────────────
@@ -806,11 +807,11 @@ class FocusYouTubePlayer {
         if (!overlay) return;
         if (isAd) {
             this._adStartMs = Date.now();
-            try { this.player.setVolume(0); } catch(e) {}
+            try { this.player.mute(); this.player.setVolume(0); } catch(e) {}
             overlay.classList.add('active');
         } else {
             overlay.classList.remove('active');
-            try { this.player.setVolume(this.volume); } catch(e) {}
+            try { this.player.unMute(); this.player.setVolume(this.volume); } catch(e) {}
             this._adStartMs = 0;
             this._stuckStartMs = 0;
             this._lastCurrentTime = -999;
