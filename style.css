@@ -3253,3 +3253,83 @@ body.is-mobile .prayer-overlay-btn { padding: 14px 28px; font-size: 0.9rem; }
 body.is-mobile .free-mode-panel { top: 16px; }
 body.is-mobile .free-timer-text { font-size: 5rem; }
 body.is-mobile .free-votes-pill { top: 124px; }
+
+/* ═══════════════════════════════════════════════════════
+   MOBILE PERFORMANCE — reduce GPU-heavy effects
+   Blur values cut to 4px (still glassy, 10× cheaper).
+   Expensive CSS animations paused/simplified.
+   ═══════════════════════════════════════════════════════ */
+
+/* Panels visible during gameplay */
+body.is-mobile .focus-sounds-panel,
+body.is-mobile .current-task-panel {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .yt-focus-block {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .prayer-panel {
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+}
+
+body.is-mobile .user-card {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .sp-gather,
+body.is-mobile .sp-guest-wait,
+body.is-mobile .sp-join-panel {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .sp-nearby {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .sp-info-toast,
+body.is-mobile .sp-invite-toast {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .modal-overlay {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .modal-content,
+body.is-mobile .login-container,
+body.is-mobile .lobby-container {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+body.is-mobile .prayer-blur-overlay {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+/* Prayer overlay — pause expensive fog animations & reduce blur filters */
+body.is-mobile .prayer-fog-layer {
+    animation-play-state: paused;
+    filter: blur(8px) !important;
+}
+
+/* Pause the animated gradient background shifts in the prayer overlay */
+body.is-mobile .prayer-overlay-bg {
+    animation: none;
+}
+
+/* Login/lobby aurora background — stop on mobile (login is brief) */
+body.is-mobile .login-bg,
+body.is-mobile .lobby-bg {
+    animation: none;
+}

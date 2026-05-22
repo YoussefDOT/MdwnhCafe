@@ -2351,9 +2351,14 @@ function resizeCanvas() {
     gameState.canvas.style.height = h + 'px';
 }
 
+let _resizeTimer = null;
 window.addEventListener('resize', () => {
-    resizeCanvas();
-    setMobileClass();
+    if (_resizeTimer) clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+        resizeCanvas();
+        setMobileClass();
+        _resizeTimer = null;
+    }, 150);
 });
 
 function setupControls() {
@@ -2596,7 +2601,7 @@ function setupFocusPanelUI() {
             const dur = gameState.focusYTPlayer.player.getDuration() || 0;
             updateTimeDisplay(dur * pct, dur);
             gameState.focusYTPlayer._drawWaveform(pct);
-        });
+        }, { passive: true });
 
         window.addEventListener('mouseup', async (e) => {
             if (!dragging) return;
@@ -5819,26 +5824,41 @@ function renderRace() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(track.image, -drawW / 2, -drawH / 2, drawW, drawH);
 
-    const cars = { ...(session.cars || {}) };
-    cars[gameState.userId] = localCar;
-    Object.entries(cars).forEach(([userId, car]) => {
+    const remoteCars = session.cars || {};
+    // Draw remote cars then local car (no object copy needed)
+    Object.entries(remoteCars).forEach(([userId, car]) => {
+        if (userId === gameState.userId) return; // drawn separately below
         const participant = session.participants && session.participants[userId];
         const drawCar = getRaceCarDrawState(userId, car);
-        drawRaceCar(drawCar, participant ? participant.index || 0 : 0, userId === gameState.userId);
+        drawRaceCar(drawCar, participant ? participant.index || 0 : 0, false);
     });
+    // Local car
+    {
+        const participant = session.participants && session.participants[gameState.userId];
+        const drawCar = getRaceCarDrawState(gameState.userId, localCar);
+        drawRaceCar(drawCar, participant ? participant.index || 0 : 0, true);
+    }
 
     ctx.restore();  // undo world translate/zoom/rotation
 
-    // Second pass: draw labels in screen space so they're always upright regardless of camera rotation
-    Object.entries(cars).forEach(([userId, car]) => {
+    // Second pass: labels in screen space (remote first, then local)
+    Object.entries(remoteCars).forEach(([userId, car]) => {
+        if (userId === gameState.userId) return;
         const participant = session.participants && session.participants[userId];
-        const drawCar = getRaceCarDrawState(userId, car);
-        const cx = drawCar ? drawCar.x : car.x;
-        const cy = drawCar ? drawCar.y : car.y;
+        const drawCar2 = getRaceCarDrawState(userId, car);
+        const cx = drawCar2 ? drawCar2.x : car.x;
+        const cy = drawCar2 ? drawCar2.y : car.y;
         const screen = raceWorldToScreen(cx, cy, W, H);
-        drawRaceCarLabelScreen(userId, participant, screen.x, screen.y, userId === gameState.userId);
+        drawRaceCarLabelScreen(userId, participant, screen.x, screen.y, false);
     });
-
+    {
+        const participant = session.participants && session.participants[gameState.userId];
+        const drawCar2 = getRaceCarDrawState(gameState.userId, localCar);
+        const cx = drawCar2 ? drawCar2.x : localCar.x;
+        const cy = drawCar2 ? drawCar2.y : localCar.y;
+        const screen = raceWorldToScreen(cx, cy, W, H);
+        drawRaceCarLabelScreen(gameState.userId, participant, screen.x, screen.y, true);
+    }
     const now = serverNow();
     if (session.startTime === 0) {
         ctx.fillStyle = 'rgba(0,0,0,0.65)';
@@ -6176,7 +6196,6 @@ function drawFocusMask(W, H) {
 
     if (player) {
         mCtx.globalCompositeOperation = 'destination-out';
-        // mCanvas is physical pixels → compute positions in physical pixels
         const centerX = mCanvas.width  / 2;
         const centerY = mCanvas.height / 2;
         const zoom = gameState.zoom;
@@ -6185,10 +6204,15 @@ function drawFocusMask(W, H) {
         const pScreenY = centerY + (playerY + gameState.camera.y) * zoom * dpr;
 
         const pRadius = (gameState.isLockedIn ? 85 : 75) * zoom * dpr;
-        const pGrad = mCtx.createRadialGradient(pScreenX, pScreenY, pRadius * 0.4, pScreenX, pScreenY, pRadius);
-        pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        mCtx.fillStyle = pGrad;
+        if (isMobile()) {
+            // Skip gradient allocation on mobile — solid circle is imperceptible difference
+            mCtx.fillStyle = 'rgba(255, 255, 255, 1)';
+        } else {
+            const pGrad = mCtx.createRadialGradient(pScreenX, pScreenY, pRadius * 0.4, pScreenX, pScreenY, pRadius);
+            pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            mCtx.fillStyle = pGrad;
+        }
         mCtx.beginPath();
         mCtx.arc(pScreenX, pScreenY, pRadius, 0, Math.PI * 2);
         mCtx.fill();
@@ -6197,10 +6221,14 @@ function drawFocusMask(W, H) {
             const lScreenX = centerX + (laptop.x + gameState.camera.x) * zoom * dpr;
             const lScreenY = centerY + (laptop.y + gameState.camera.y) * zoom * dpr;
             const lRadius = 100 * zoom * dpr;
-            const lGrad = mCtx.createRadialGradient(lScreenX, lScreenY, lRadius * 0.4, lScreenX, lScreenY, lRadius);
-            lGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-            lGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            mCtx.fillStyle = lGrad;
+            if (isMobile()) {
+                mCtx.fillStyle = 'rgba(255, 255, 255, 1)';
+            } else {
+                const lGrad = mCtx.createRadialGradient(lScreenX, lScreenY, lRadius * 0.4, lScreenX, lScreenY, lRadius);
+                lGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                lGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                mCtx.fillStyle = lGrad;
+            }
             mCtx.beginPath();
             mCtx.arc(lScreenX, lScreenY, lRadius, 0, Math.PI * 2);
             mCtx.fill();
@@ -6741,47 +6769,49 @@ function drawFocusFog(W, H) {
     if (gameState.focusFogAlpha <= 0.01) return;
     const ctx = gameState.ctx;
     const canvas = gameState.canvas;
-    // Use logical viewport dims (ctx is DPR-scaled when called from render)
     const w = W || canvas.width  / (gameState.dpr || 1);
     const h = H || canvas.height / (gameState.dpr || 1);
 
     ctx.save();
     ctx.globalAlpha = gameState.focusFogAlpha * 0.85;
 
-    const t = Date.now() * 0.0004; // slower, extremely calming movement
+    if (isMobile()) {
+        // Simple static overlay on mobile — no gradient allocation every frame
+        ctx.fillStyle = 'rgba(10, 15, 30, 0.35)';
+        ctx.fillRect(0, 0, w, h);
+    } else {
+        const t = Date.now() * 0.0004;
 
-    // Gradient 1: Smooth Slate/Indigo edge shadow vignette
-    const grad1 = ctx.createRadialGradient(
-        w / 2 + Math.sin(t) * (w * 0.15), h / 2 + Math.cos(t * 0.7) * (h * 0.15), Math.min(w, h) * 0.3,
-        w / 2, h / 2, Math.max(w, h) * 0.95
-    );
-    grad1.addColorStop(0, 'rgba(10, 15, 30, 0)');
-    grad1.addColorStop(0.6, 'rgba(10, 15, 30, 0.2)');
-    grad1.addColorStop(1, 'rgba(13, 27, 42, 0.6)'); // deep blue accent
-    ctx.fillStyle = grad1;
-    ctx.fillRect(0, 0, w, h);
+        const grad1 = ctx.createRadialGradient(
+            w / 2 + Math.sin(t) * (w * 0.15), h / 2 + Math.cos(t * 0.7) * (h * 0.15), Math.min(w, h) * 0.3,
+            w / 2, h / 2, Math.max(w, h) * 0.95
+        );
+        grad1.addColorStop(0, 'rgba(10, 15, 30, 0)');
+        grad1.addColorStop(0.6, 'rgba(10, 15, 30, 0.2)');
+        grad1.addColorStop(1, 'rgba(13, 27, 42, 0.6)');
+        ctx.fillStyle = grad1;
+        ctx.fillRect(0, 0, w, h);
 
-    // Gradient 2: Organic drifting emerald/teal focus highlight (creates a warm, premium organic feel)
-    const grad2 = ctx.createRadialGradient(
-        w * 0.3 + Math.cos(t * 0.8) * (w * 0.1), h * 0.4 + Math.sin(t * 1.1) * (h * 0.1), Math.min(w, h) * 0.25,
-        w * 0.3, h * 0.4, Math.max(w, h) * 0.75
-    );
-    grad2.addColorStop(0, 'rgba(16, 185, 129, 0)');
-    grad2.addColorStop(0.5, 'rgba(16, 185, 129, 0.04)');
-    grad2.addColorStop(1, 'rgba(16, 185, 129, 0.12)');
-    ctx.fillStyle = grad2;
-    ctx.fillRect(0, 0, w, h);
+        const grad2 = ctx.createRadialGradient(
+            w * 0.3 + Math.cos(t * 0.8) * (w * 0.1), h * 0.4 + Math.sin(t * 1.1) * (h * 0.1), Math.min(w, h) * 0.25,
+            w * 0.3, h * 0.4, Math.max(w, h) * 0.75
+        );
+        grad2.addColorStop(0, 'rgba(16, 185, 129, 0)');
+        grad2.addColorStop(0.5, 'rgba(16, 185, 129, 0.04)');
+        grad2.addColorStop(1, 'rgba(16, 185, 129, 0.12)');
+        ctx.fillStyle = grad2;
+        ctx.fillRect(0, 0, w, h);
 
-    // Gradient 3: Soft drifting violet/indigo cloud at bottom right
-    const grad3 = ctx.createRadialGradient(
-        w * 0.8 + Math.sin(t * 1.3) * (w * 0.08), h * 0.8 + Math.cos(t * 0.9) * (h * 0.08), Math.min(w, h) * 0.25,
-        w * 0.8, h * 0.8, Math.max(w, h) * 0.7
-    );
-    grad3.addColorStop(0, 'rgba(99, 102, 241, 0)');
-    grad3.addColorStop(0.5, 'rgba(99, 102, 241, 0.03)');
-    grad3.addColorStop(1, 'rgba(99, 102, 241, 0.15)');
-    ctx.fillStyle = grad3;
-    ctx.fillRect(0, 0, w, h);
+        const grad3 = ctx.createRadialGradient(
+            w * 0.8 + Math.sin(t * 1.3) * (w * 0.08), h * 0.8 + Math.cos(t * 0.9) * (h * 0.08), Math.min(w, h) * 0.25,
+            w * 0.8, h * 0.8, Math.max(w, h) * 0.7
+        );
+        grad3.addColorStop(0, 'rgba(99, 102, 241, 0)');
+        grad3.addColorStop(0.5, 'rgba(99, 102, 241, 0.03)');
+        grad3.addColorStop(1, 'rgba(99, 102, 241, 0.15)');
+        ctx.fillStyle = grad3;
+        ctx.fillRect(0, 0, w, h);
+    }
 
     ctx.restore();
 }
@@ -8501,7 +8531,7 @@ function showSpToast(invite) {
         const pct = Math.max(0, ((remaining - (Date.now() - start)) / remaining) * 100);
         if (bar) bar.style.width = pct + '%';
         if (pct <= 0) { clearInterval(sp.toastInterval); sp.toastInterval = null; hideSpToast(); }
-    }, 50);
+    }, 100);
 
     if (sp.toastTimeout) clearTimeout(sp.toastTimeout);
     sp.toastTimeout = setTimeout(() => {
@@ -9359,8 +9389,13 @@ function startPrayerRain() {
 
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     resize();
-    canvas._rainResizeHandler = resize;
-    window.addEventListener('resize', resize);
+    let _rainResizeTimer = null;
+    const debouncedResize = () => {
+        if (_rainResizeTimer) clearTimeout(_rainResizeTimer);
+        _rainResizeTimer = setTimeout(() => { resize(); _rainResizeTimer = null; }, 150);
+    };
+    canvas._rainResizeHandler = debouncedResize;
+    window.addEventListener('resize', debouncedResize);
 
     // 110 gentle drops — thin, slow, slightly angled left
     const drops = Array.from({ length: 110 }, () => ({
