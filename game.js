@@ -680,21 +680,22 @@ class FocusYouTubePlayer {
             // ── Ad detection ──────────────────────────────────────────
             const now = Date.now();
             const inGrace = now - (this._loadedAt || 0) < 2500;
-            const isActive = state === 1 || state === 3; // PLAYING or BUFFERING
+            const isActive = state === 1 || state === 3;
+            // DEBUG: show raw YouTube state on screen so we can see what it reports during ads
+            let _dbg = document.getElementById('yt-debug');
+            if (!_dbg) { _dbg = document.createElement('div'); _dbg.id = 'yt-debug'; _dbg.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.4 monospace;padding:8px 10px;z-index:99999;direction:ltr;text-align:left'; document.body.appendChild(_dbg); }
+            try { const _vd = this.player.getVideoData(); _dbg.textContent = `S:${state} T:${cur.toFixed(2)} D:${dur.toFixed(1)} VID:${_vd?.video_id||'?'} OURS:${this.videoId} MATCH:${_vd?.video_id===this.videoId} AD:${this._isAdPlaying} GR:${inGrace}`; } catch(e) { _dbg.textContent = 'ERR:'+e.message; }
+
             if (!inGrace) {
                 let isAd = false;
-                // M1: undocumented YouTube state -2 means ad is playing
                 if (state === -2) isAd = true;
-                // M2: some YouTube versions return negative time during pre-roll
                 if (!isAd && cur < -0.1) isAd = true;
-                // M3: playing video_id differs from what we loaded → pre-roll ad video
                 if (!isAd && isActive) {
                     try {
                         const vd = this.player.getVideoData();
                         if (vd && vd.video_id && vd.video_id !== this.videoId) isAd = true;
                     } catch(e) {}
                 }
-                // M4: currentTime genuinely frozen (some mobile/bumper ad edge cases)
                 if (!isAd && isActive && this._lastCurrentTime > -900) {
                     if (Math.abs(cur - this._lastCurrentTime) < 0.05) {
                         if (!this._stuckStartMs) this._stuckStartMs = now;
