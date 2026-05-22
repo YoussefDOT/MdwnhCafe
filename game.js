@@ -497,6 +497,27 @@ class FocusYouTubePlayer {
         this._loadedAt     = 0;
         this._lastCurrentTime = -999;
         this._stuckStartMs = 0;
+        this._initDebugMonitor();
+    }
+
+    _initDebugMonitor() {
+        const self = this;
+        const dbg = document.createElement('div');
+        dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:#fff;font:bold 15px/1.6 monospace;padding:14px;z-index:999999;direction:ltr;text-align:left;word-break:break-all';
+        dbg.textContent = 'YT DEBUG: waiting for player...';
+        (document.body || document.documentElement).appendChild(dbg);
+        const msgs = [];
+        window.addEventListener('message', ev => {
+            if (typeof ev.data !== 'string') return;
+            try { const d = JSON.parse(ev.data); if (d.event || d.info) { msgs.push(JSON.stringify(d).slice(0,150)); if (msgs.length > 5) msgs.shift(); } } catch(e) {}
+        });
+        setInterval(() => {
+            if (!self.player || !self.ready) { dbg.textContent = 'YT DEBUG: player=' + !!self.player + ' ready=' + self.ready + ' | msgs:' + msgs.length; return; }
+            try {
+                const s = self.player.getPlayerState(), t = self.player.getCurrentTime(), d = self.player.getDuration(), vd = self.player.getVideoData();
+                dbg.textContent = 'S:' + s + ' T:' + (t||0).toFixed(1) + ' D:' + (d||0).toFixed(0) + ' VID:' + (vd?.video_id||'?') + ' OUR:' + (self.videoId||'?') + ' AD:' + self._isAdPlaying + '\nMSG:' + (msgs[msgs.length-1]||'none');
+            } catch(e) { dbg.textContent = 'YT DEBUG ERR: ' + e.message; }
+        }, 400);
     }
 
     _ensureApiLoaded() {
@@ -681,11 +702,6 @@ class FocusYouTubePlayer {
             const now = Date.now();
             const inGrace = now - (this._loadedAt || 0) < 2500;
             const isActive = state === 1 || state === 3;
-            // DEBUG: show raw YouTube state on screen so we can see what it reports during ads
-            let _dbg = document.getElementById('yt-debug');
-            if (!_dbg) { _dbg = document.createElement('div'); _dbg.id = 'yt-debug'; _dbg.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.4 monospace;padding:8px 10px;z-index:99999;direction:ltr;text-align:left'; document.body.appendChild(_dbg); }
-            try { const _vd = this.player.getVideoData(); _dbg.textContent = `S:${state} T:${cur.toFixed(2)} D:${dur.toFixed(1)} VID:${_vd?.video_id||'?'} OURS:${this.videoId} MATCH:${_vd?.video_id===this.videoId} AD:${this._isAdPlaying} GR:${inGrace}`; } catch(e) { _dbg.textContent = 'ERR:'+e.message; }
-
             if (!inGrace) {
                 let isAd = false;
                 if (state === -2) isAd = true;
