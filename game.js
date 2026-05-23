@@ -229,18 +229,29 @@ async function initDiscordOAuth() {
     setupDiscordLoginButton();
     parseDiscordOauthHash();
 
-    const session = loadDiscordSession();
-    if (!session) return;
+    const loading = document.getElementById('loading-screen');
+    const lobby   = document.getElementById('lobby-screen');
 
-    const user = await fetchDiscordUser(session.token);
-    if (!user) {
-        clearDiscordSession();
+    const session = loadDiscordSession();
+    if (!session) {
+        loading?.classList.remove('active');
+        lobby?.classList.add('active');
         return;
     }
 
-    const lobby = await resolveUserLobby(user.id);
-    if (lobby) {
-        showDiscordWelcomeScreen(user, lobby);
+    // Keep spinner while we validate the token + read Firebase
+    const user = await fetchDiscordUser(session.token);
+    if (!user) {
+        clearDiscordSession();
+        loading?.classList.remove('active');
+        lobby?.classList.add('active');
+        return;
+    }
+
+    const resolvedLobby = await resolveUserLobby(user.id);
+    loading?.classList.remove('active');
+    if (resolvedLobby) {
+        showDiscordWelcomeScreen(user, resolvedLobby);
     } else {
         showDiscordFirstLobbyChooser(user);
     }

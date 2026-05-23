@@ -1276,12 +1276,26 @@ body {
 .sound-vol::-moz-range-track { background: transparent; }
 
 /* ===== LOBBY SELECTION SCREEN ===== */
+#loading-screen,
 #lobby-screen,
 #discord-welcome-screen {
     justify-content: center;
     align-items: center;
     background: #080a0f;
     overflow: hidden;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-ring {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.08);
+    border-top-color: rgba(255,255,255,0.65);
+    animation: spin 0.75s linear infinite;
 }
 
 #lobby-screen::before,
