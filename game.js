@@ -2147,8 +2147,10 @@ async function spawnSirajGhost() {
     gameState.selectedLobby = 'male';
     const _ls = document.getElementById('lobby-screen');
     const _li = document.getElementById('login-screen');
+    const _dw = document.getElementById('discord-welcome-screen');
     if (_ls) _ls.classList.remove('active');
     if (_li) _li.classList.remove('active');
+    if (_dw) _dw.classList.remove('active');
     if (loadingOverlay) loadingOverlay.classList.remove('active');
     startGame({
         userId: sirajId,
