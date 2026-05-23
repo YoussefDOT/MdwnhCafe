@@ -316,6 +316,7 @@ body {
 }
 
 .modal-content {
+    position: relative;
     background: rgba(12,12,18,0.92);
     backdrop-filter: blur(28px) saturate(1.5);
     border: 1px solid rgba(255,255,255,0.10);
@@ -3563,6 +3564,42 @@ body.is-mobile .lobby-bg {
 .siraj-loading-overlay.active { display: flex; }
 
 /* ── Mode select panel ──────────────────────────────────────────── */
+.mode-select-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.mode-select-close-btn {
+    position: absolute;
+    top: 14px;
+    left: 16px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.30);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+    transition: color 0.15s;
+}
+.mode-select-close-btn:hover { color: rgba(255,255,255,0.70); }
+
+.mode-select-test-link {
+    background: none;
+    border: none;
+    color: rgba(255,152,50,0.55);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 10px;
+    letter-spacing: 0.03em;
+    transition: color 0.15s;
+}
+.mode-select-test-link:hover { color: rgba(255,152,50,0.90); }
+
 .mode-select-content {
     padding: 28px 24px;
     max-width: 460px;

@@ -3575,16 +3575,23 @@ function setupModeSelectUI() {
     const modal = document.getElementById('mode-select-modal');
     if (!modal) return;
 
+    document.getElementById('mode-select-close')?.addEventListener('click', () => {
+        modal.classList.remove('active');
+    });
+
     document.getElementById('mode-select-pomo')?.addEventListener('click', () => {
         modal.classList.remove('active');
-        const testBtn = document.getElementById('pomodoro-test');
-        if (testBtn) testBtn.style.display = 'none';
         document.getElementById('pomodoro-modal').classList.add('active');
     });
 
     document.getElementById('mode-select-free')?.addEventListener('click', () => {
         modal.classList.remove('active');
         startFreeMode(null, false);
+    });
+
+    document.getElementById('mode-select-test')?.addEventListener('click', () => {
+        modal.classList.remove('active');
+        document.getElementById('test-mode-modal').classList.add('active');
     });
 }
 
@@ -3616,15 +3623,8 @@ function setupPomodoroUI() {
 
     cancelBtn.addEventListener('click', () => {
         modal.classList.remove('active');
+        document.getElementById('mode-select-modal').classList.add('active');
     });
-
-    const testBtn = document.getElementById('pomodoro-test');
-    if (testBtn) {
-        testBtn.addEventListener('click', () => {
-            modal.classList.remove('active');
-            document.getElementById('test-mode-modal').classList.add('active');
-        });
-    }
 
     confirmBtn.addEventListener('click', () => {
         const getVal = (type, defaultVal) => {

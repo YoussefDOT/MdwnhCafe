@@ -224,23 +224,27 @@
 
     <!-- نافذة اختيار وضع العمل -->
     <div id="mode-select-modal" class="modal-overlay">
-        <div class="modal-content mode-select-content">
-            <div class="mode-select-cards">
-                <button id="mode-select-pomo" class="mode-card">
-                    <div class="mode-card-emoji-stack">
-                        <span class="tomato-emoji tomato-back">🍅</span>
-                        <span class="tomato-emoji tomato-mid">🍅</span>
-                        <span class="tomato-emoji tomato-front">🍅</span>
-                    </div>
-                    <div class="mode-card-title">بومودورو</div>
-                    <div class="mode-card-desc">اختر مدة العمل والراحة وعدد الجلسات!</div>
-                </button>
-                <button id="mode-select-free" class="mode-card">
-                    <div class="mode-card-emoji">🌿</div>
-                    <div class="mode-card-title">الوضع الحر</div>
-                    <div class="mode-card-desc">اعمل براحتك. يسمح باخذ استراحة كل ٢٥ دقيقة</div>
-                </button>
+        <div class="mode-select-wrapper">
+            <div class="modal-content mode-select-content">
+                <button id="mode-select-close" class="mode-select-close-btn" aria-label="إغلاق">×</button>
+                <div class="mode-select-cards">
+                    <button id="mode-select-pomo" class="mode-card">
+                        <div class="mode-card-emoji-stack">
+                            <span class="tomato-emoji tomato-back">🍅</span>
+                            <span class="tomato-emoji tomato-mid">🍅</span>
+                            <span class="tomato-emoji tomato-front">🍅</span>
+                        </div>
+                        <div class="mode-card-title">بومودورو</div>
+                        <div class="mode-card-desc">اختر مدة العمل والراحة وعدد الجلسات!</div>
+                    </button>
+                    <button id="mode-select-free" class="mode-card">
+                        <div class="mode-card-emoji">🌿</div>
+                        <div class="mode-card-title">الوضع الحر</div>
+                        <div class="mode-card-desc">اعمل براحتك. يسمح باخذ استراحة كل ٢٥ دقيقة</div>
+                    </button>
+                </div>
             </div>
+            <button id="mode-select-test" class="mode-select-test-link">⚡ وضع الاختبار</button>
         </div>
     </div>
 
@@ -286,10 +290,8 @@
 
             <div class="pomo-launch-row" style="margin-top: 30px; display: flex; gap: 10px; align-items: stretch;">
                 <button id="pomodoro-confirm" class="btn-primary" style="flex: 1; font-size: 20px; padding: 15px;">أنا لها</button>
-                <button id="free-mode-btn" class="free-mode-modal-btn">وضع حر 🌿</button>
             </div>
             <button id="pomodoro-cancel" class="btn-secondary pomodoro-back-btn">رجوع</button>
-            <button id="pomodoro-test" class="btn-cancel" style="display:none;margin-top:5px;background:none;border:none;color:#ff9b3a;cursor:pointer;font-weight:600;font-size:13px;letter-spacing:0.5px;">⚡ وضع الاختبار</button>
         </div>
     </div>
 
