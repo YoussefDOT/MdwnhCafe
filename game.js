@@ -10489,16 +10489,30 @@ function updateAzkarButton() {
     btn.classList.toggle('hidden', !shouldShow);
     if (!shouldShow) {
         confirm?.classList.add('hidden');
-        return;
     }
 
     const label = document.getElementById('azkar-btn-label');
-    if (type === 'morning') {
-        btn.classList.add('morning'); btn.classList.remove('evening');
-        if (label) label.textContent = 'أذكار الصباح';
-    } else {
-        btn.classList.add('evening'); btn.classList.remove('morning');
-        if (label) label.textContent = 'أذكار المساء';
+    if (shouldShow) {
+        if (type === 'morning') {
+            btn.classList.add('morning'); btn.classList.remove('evening');
+            if (label) label.textContent = 'أذكار الصباح';
+        } else {
+            btn.classList.add('evening'); btn.classList.remove('morning');
+            if (label) label.textContent = 'أذكار المساء';
+        }
+    }
+
+    // Mobile floating button: show when card is focus-hidden and normal button is hidden
+    const floatBtn = document.getElementById('azkar-focus-float-btn');
+    if (floatBtn && isMobile()) {
+        const cardHidden = document.getElementById('user-card')?.classList.contains('focus-hidden');
+        const floatShouldShow = shouldShow && cardHidden;
+        floatBtn.classList.toggle('hidden', !floatShouldShow);
+        if (floatShouldShow && type) {
+            floatBtn.textContent = type === 'morning' ? 'أذكار الصباح' : 'أذكار المساء';
+            floatBtn.classList.toggle('morning', type === 'morning');
+            floatBtn.classList.toggle('evening', type === 'evening');
+        }
     }
 }
 
@@ -10940,6 +10954,12 @@ function setupAzkarUI() {
         const card = document.getElementById('user-card');
         if (!card) return;
         if (!card.contains(e.target)) hideAzkarConfirm();
+    });
+
+    // Mobile floating azkar button — tapping directly opens overlay (no confirm; card is hidden)
+    document.getElementById('azkar-focus-float-btn')?.addEventListener('click', () => {
+        const type = getCurrentAzkarType();
+        if (type) openAzkarOverlay(type);
     });
 
     loadAzkarCompletedFromFirebase();

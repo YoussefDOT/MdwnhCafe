@@ -4171,6 +4171,9 @@ body.is-mobile .azkar-confirm { padding: 9px 10px; }
 body.is-mobile .azkar-confirm-q { font-size: 0.72rem; margin-bottom: 7px; }
 body.is-mobile .azkar-confirm-btn { padding: 7px 8px; font-size: 0.74rem; }
 
+/* On mobile the -200px bottom extension would shift centered content off-screen */
+body.is-mobile .azkar-overlay { bottom: 0; }
+
 body.is-mobile .azkar-overlay-content {
     width: 96vw;
     max-height: 92vh;
@@ -4378,3 +4381,38 @@ body.is-mobile.azkar-active .logout-pill.focus-hidden {
     line-height: 1;
 }
 .azkar-tp-close:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.07); }
+
+/* ── Mobile floating azkar button (shown during focus mode when user card is hidden) ── */
+.azkar-focus-float-btn {
+    display: none; /* desktop: never show */
+}
+body.is-mobile .azkar-focus-float-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 1500;
+    padding: 7px 14px;
+    border-radius: 50px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(14,14,20,0.72);
+    backdrop-filter: blur(16px);
+    color: rgba(255,255,255,0.82);
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: all;
+}
+body.is-mobile .azkar-focus-float-btn.morning {
+    border-color: rgba(160,210,255,0.30);
+    color: rgba(180,220,255,0.92);
+}
+body.is-mobile .azkar-focus-float-btn.evening {
+    border-color: rgba(100,120,220,0.30);
+    color: rgba(140,160,255,0.92);
+}
+body.is-mobile .azkar-focus-float-btn.hidden { display: none; }
