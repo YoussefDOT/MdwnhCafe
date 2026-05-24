@@ -2389,6 +2389,23 @@ function startGame(userData) {
         onDisconnect(ref(database, `users/${gameState.userId}`)).remove();
     } else {
         onDisconnect(activeRef).set(false);
+
+        // Single-session enforcement: each login writes a unique token. If another
+        // tab/device logs in with the same account, it overwrites the token. The
+        // original tab detects the mismatch and shows a "logged in elsewhere" overlay.
+        const _tok = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        gameState._sessionToken = _tok;
+        const sessionRef = ref(database, `users/${gameState.userId}/activeSession`);
+        set(sessionRef, _tok);
+        onDisconnect(sessionRef).set(null);
+        onValue(sessionRef, snap => {
+            const live = snap.val();
+            if (live && live !== gameState._sessionToken) {
+                document.getElementById('dup-session-overlay')?.classList.add('active');
+                // Halt the game loop gently — the overlay reload button will refresh.
+                gameState._dupSessionDetected = true;
+            }
+        });
     }
 
     document.getElementById('login-screen').classList.remove('active');
@@ -3906,6 +3923,12 @@ function startPomodoroPhase(phase) {
             createdAt: gameState.pomodoro.createdAt || Date.now()
         };
         updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = pomoData;
+        // Host pushes phaseEndTime to the live doc so guests stay in sync across
+        // break and subsequent work cycles (agreedEndTime only covers the first cycle).
+        const _sp = gameState.sharedPomo;
+        if (_sp.isHost && _sp.phase === 'active' && _sp.sessionId) {
+            updates[spPath(`live/${_sp.sessionId}/phaseEndTime`)] = gameState.pomodoro.endTime;
+        }
         update(ref(database), updates);
     }
 
@@ -4009,9 +4032,20 @@ function doLogout() {
                 .then(() => window.location.reload())
                 .catch(() => window.location.reload());
         } else {
+            const logoutCleanups = {};
             if (gameState.freeMode.active && gameState.freeMode.laptopId != null) {
-                update(ref(database), { [lobbyPath(`pomodoro/${gameState.freeMode.laptopId}`)]: null });
+                logoutCleanups[lobbyPath(`pomodoro/${gameState.freeMode.laptopId}`)] = null;
             }
+            // Clean up shared pomo live doc on explicit logout so Firebase isn't left dirty
+            const _sp = gameState.sharedPomo;
+            if (_sp.phase === 'active' && _sp.sessionId) {
+                if (_sp.isHost) {
+                    logoutCleanups[spPath(`live/${_sp.sessionId}`)] = null;
+                } else {
+                    logoutCleanups[spPath(`live/${_sp.sessionId}/participants/${gameState.userId}`)] = null;
+                }
+            }
+            if (Object.keys(logoutCleanups).length) update(ref(database), logoutCleanups);
             set(ref(database, `users/${gameState.userId}/activeInGame`), false)
                 .then(() => window.location.reload())
                 .catch(() => window.location.reload());
@@ -4531,6 +4565,9 @@ function updateAvatarColorFade() {
 }
 
 function gameLoop(timestamp) {
+    // Stop the loop if this session was displaced by a newer login elsewhere.
+    if (gameState._dupSessionDetected) return;
+
     if (!timestamp) timestamp = performance.now();
     if (!gameState.lastTime) gameState.lastTime = timestamp;
     let deltaTime = timestamp - gameState.lastTime;
@@ -6706,6 +6743,14 @@ function updatePomodoro() {
                         gameState.focusAudioEngine.stopAll();
                         if (gameState.focusYTPlayer) gameState.focusYTPlayer.pause();
                     }
+                    // Clean up shared pomo state so the blue ring, emoji floats, and
+                    // invite capability all reset correctly after a natural session end.
+                    if (gameState.sharedPomo.phase === 'active') {
+                        if (gameState.sharedPomo.isHost && gameState.sharedPomo.sessionId) {
+                            update(ref(database), { [spPath(`live/${gameState.sharedPomo.sessionId}`)]: null });
+                        }
+                        cleanupSpLocal(true);
+                    }
                     gameState.pomodoro.transitioning = false;
                     showSuccessModal(gameState.pomodoro.totalSessions, gameState.pomodoro.workDuration, completedTaskText);
                 } catch(e) {
@@ -6756,6 +6801,13 @@ function updatePomodoro() {
                 const taskInput = document.getElementById('current-task-input');
                 if (taskInput) taskInput.blur();
 
+                // Clean up shared pomo state (blue ring, emoji floats, invite capability)
+                if (gameState.sharedPomo.phase === 'active') {
+                    if (gameState.sharedPomo.isHost && gameState.sharedPomo.sessionId) {
+                        update(ref(database), { [spPath(`live/${gameState.sharedPomo.sessionId}`)]: null });
+                    }
+                    cleanupSpLocal(true);
+                }
                 gameState.pomodoro.transitioning = false;
             } else {
                 if (gameState.focusAudioEngine) {
@@ -7586,7 +7638,7 @@ function confirmJoinCoopSession() {
     sp.sessionId = data.hostId;
     const existingUids = Object.keys(data.participants || {});
     if (!existingUids.includes(gameState.userId)) existingUids.push(gameState.userId);
-    sp.activeGroupMembers = existingUids;
+    sp.activeGroupMembers = existingUids.sort();
     sp.coopAnim.members = {};
     sp.coopAnim.emojiFloats = [];
 
@@ -7742,7 +7794,7 @@ function confirmJoinSoloSession() {
     sp.phase = 'active';
     sp.isHost = false;
     sp.sessionId = hostId;
-    sp.activeGroupMembers = [hostId, gameState.userId];
+    sp.activeGroupMembers = [hostId, gameState.userId].sort();
     sp.coopAnim.members = {};
     sp.coopAnim.emojiFloats = [];
     for (const uid of sp.activeGroupMembers) {
@@ -7804,10 +7856,10 @@ function setupSoloUpgradeListener() {
         sp.phase = 'active';
         sp.isHost = true;
         sp.sessionId = gameState.userId;
-        sp.activeGroupMembers = uids;
+        sp.activeGroupMembers = [...uids].sort();
         sp.coopAnim.members = {};
         sp.coopAnim.emojiFloats = [];
-        for (const uid of uids) {
+        for (const uid of sp.activeGroupMembers) {
             sp.coopAnim.members[uid] = {
                 state: 'idle', stateTimer: 60 + Math.random() * 100, stateProgress: 0,
                 orbitAngle: Math.random() * Math.PI * 2,
@@ -8123,8 +8175,10 @@ function launchSharedPomoWork(session) {
     const sp = gameState.sharedPomo;
     sp.phase = 'active';
 
-    // Snapshot group members for canvas indicators, then unsubscribe
-    sp.activeGroupMembers = Object.keys(session.participants || {});
+    // Snapshot group members for canvas indicators, then unsubscribe.
+    // Sort so home-position indices are identical on every client regardless of
+    // Firebase key return order (which is lexicographic, not insertion order).
+    sp.activeGroupMembers = Object.keys(session.participants || {}).sort();
     // Reset coop animation state for new session
     sp.coopAnim.members = {};
     sp.coopAnim.emojiFloats = [];
@@ -8225,8 +8279,12 @@ function launchSharedPomoWork(session) {
         // Kidnap animation pulls guest to laptop — startPomodoroPhase fires at animation end
         startKidnapAnimation(laptop);
 
+        // Remove participant entry from live doc if this tab closes mid-session
+        const _guestHostId = session.hostId || sp.sessionId;
+        onDisconnect(ref(database, spPath(`live/${_guestHostId}/participants/${gameState.userId}`))).remove();
+
         // Listen to live doc so late joiners appear in our activeGroupMembers
-        setupSpLiveListener(session.hostId || sp.sessionId);
+        setupSpLiveListener(_guestHostId);
     }
 }
 
@@ -8336,6 +8394,7 @@ function handleHostLeft() {
             ),
         };
         update(ref(database), { [spPath(`live/${gameState.userId}`)]: liveDoc });
+        onDisconnect(ref(database, spPath(`live/${gameState.userId}`))).remove();
         setupSpLiveListener(gameState.userId);
         showSpInfoToast('أصبحت مضيف الجلسة');
     } else {
@@ -8372,23 +8431,44 @@ function setupSpLiveListener(hostId) {
             return true;
         });
 
-        // Add any UIDs we don't know about yet (late joiners)
+        // Add any UIDs we don't know about yet (late joiners), then keep sorted
         for (const uid of uids) {
             if (!sp.activeGroupMembers.includes(uid)) {
                 sp.activeGroupMembers.push(uid);
                 changed = true;
             }
         }
+        if (changed) sp.activeGroupMembers.sort();
 
         // Init animation state for newly discovered members
         if (changed) {
-            for (const uid of sp.activeGroupMembers) {
+            const total = sp.activeGroupMembers.length;
+            for (let i = 0; i < total; i++) {
+                const uid = sp.activeGroupMembers[i];
                 if (!sp.coopAnim.members[uid]) {
+                    // Start late joiners directly at their grid slot so they don't
+                    // slide in from the center over several seconds.
+                    const { homeX, homeY } = _coopMemberHome(i, total);
                     sp.coopAnim.members[uid] = {
                         state: 'idle', stateTimer: 60 + Math.random() * 100, stateProgress: 0,
                         orbitAngle: Math.random() * Math.PI * 2,
-                        dxBlend: 0, dyBlend: 0, scaleXBlend: 1, scaleYBlend: 1, angleBlend: 0,
+                        dxBlend: homeX, dyBlend: homeY, scaleXBlend: 1, scaleYBlend: 1, angleBlend: 0,
                     };
+                }
+            }
+        }
+
+        // ── Phase timer sync for guests (break + subsequent work cycles) ─────
+        // The host writes phaseEndTime to the live doc whenever startPomodoroPhase
+        // fires. Guests read it here and correct any drift from loading-time variance.
+        if (!sp.isHost && sp.phase === 'active' && gameState.pomodoro.active && data.phaseEndTime) {
+            const drift = Math.abs(gameState.pomodoro.endTime - data.phaseEndTime);
+            if (drift > 1500) { // only correct if off by more than 1.5 s
+                if (gameState.pomodoro.phase === 'break' || gameState.pomodoro.phase === 'work') {
+                    gameState.pomodoro.endTime = data.phaseEndTime;
+                } else if (gameState.pomodoro.phase === 'wait') {
+                    // Kidnap animation in progress — store for startPomodoroPhase to consume
+                    sp.agreedEndTime = data.phaseEndTime;
                 }
             }
         }
@@ -9178,8 +9258,8 @@ function updateCoopAnimation() {
         extGroups[p.coopHostId].push(p.userId);
     }
     for (const [hostId, uids] of Object.entries(extGroups)) {
-        // Ensure host is first
-        const sorted = [...new Set([hostId, ...uids])];
+        // Sort so home-position index is stable regardless of gameState.players iteration order
+        const sorted = [...new Set([hostId, ...uids])].sort();
         _advanceCoopMems(sorted, sp.extCoopAnims, dt, ca.syncBobPhase);
     }
 
@@ -9288,9 +9368,11 @@ function updateCoopTaskPanel() {
         const player = gameState.players[uid];
         if (!player) continue;
         const av = player.avatar ? `<img src="${player.avatar}" alt="">` : (player.username||'?').charAt(0).toUpperCase();
+        // Only show task text for the current user — others' tasks are private
+        const taskText = uid === gameState.userId ? (player.currentTask || '…') : '…';
         html += `<div class="sp-coop-row">
             <div class="sp-coop-av">${av}</div>
-            <span class="sp-coop-task">${player.currentTask || '…'}</span>
+            <span class="sp-coop-task">${taskText}</span>
         </div>`;
     }
     panel.innerHTML = html;
