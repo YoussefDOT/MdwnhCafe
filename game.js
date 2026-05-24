@@ -2687,6 +2687,8 @@ function setupControls() {
             e.preventDefault();
             return;
         }
+        // Disable scroll zoom while azkar overlay is open
+        if (gameState.azkar && gameState.azkar.active) return;
         const zoomSpeed = 0.001;
         gameState.zoom -= e.deltaY * zoomSpeed;
         gameState.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, gameState.zoom));
@@ -10590,8 +10592,24 @@ function openAzkarOverlay(type) {
     az.focusMobileWasActive = document.body.classList.contains('mobile-focus-mode') ||
         document.querySelector('.user-card.focus-hidden') != null;
 
+    // Block wheel events on the overlay so they don't zoom the game or scroll the page
+    const _overlayEl = document.getElementById('azkar-overlay');
+    if (_overlayEl && !_overlayEl._azkarWheelBlock) {
+        _overlayEl._azkarWheelBlock = (e) => {
+            // Allow scroll within the azkar list; block everything else
+            if (!e.target.closest('.azkar-list')) {
+                e.preventDefault();
+            }
+            e.stopPropagation();
+        };
+        _overlayEl.addEventListener('wheel', _overlayEl._azkarWheelBlock, { passive: false });
+    }
+
     // Render & start lock timer
     renderAzkarList();
+    // Reset scroll to top so first azkar is always visible
+    const _listEl = document.getElementById('azkar-list');
+    if (_listEl) _listEl.scrollTop = 0;
     updateAzkarFinishTimer();
 }
 
