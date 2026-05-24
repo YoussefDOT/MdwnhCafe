@@ -1238,6 +1238,7 @@ const gameState = {
         workMsAtLastBreak: 0,    // totalWorkMs snapshot when last break started (for 25-min reset)
         _breakEndTimer: null,    // setTimeout id for post-break kidnap delay
         _lastSavedAt: 0,         // last time we wrote totalWorkMs to Firebase
+        _createdAt: 0,           // session start timestamp, preserved across periodic saves
         needsResume: false,      // set on login restore; _startFreeModeWork fires on first tick
     },
     prayer: {
@@ -2475,6 +2476,7 @@ function startGame(userData) {
                     fm.laptopId      = activeLaptopId;
                     fm.isShared      = false;
                     fm.phase         = 'idle'; // _startFreeModeWork fires via needsResume
+                    fm._createdAt    = state.createdAt || Date.now();
                     fm.totalWorkMs   = state.totalWorkMs || 0;
                     fm.workStartTime = 0;
                     fm.breakEndTime  = 0;
@@ -8619,6 +8621,7 @@ function startFreeMode(laptopId, isShared = false) {
     fm.selectedBreakMins = 5;
     fm.workMsAtLastBreak = 0;
     fm._breakEndTimer    = null;
+    fm._createdAt        = Date.now();
 
     update(ref(database), { [lobbyPath(`pomodoro/${laptop.id}`)]: {
         claimedBy:   gameState.userId,
@@ -8672,10 +8675,25 @@ function saveFreeModStateToFirebase() {
         currentTotalMs += Date.now() - fm.workStartTime;
     }
     fm._lastSavedAt = Date.now();
-    update(ref(database), {
-        [lobbyPath(`pomodoro/${fm.laptopId}/totalWorkMs`)]: currentTotalMs,
-        [lobbyPath(`pomodoro/${fm.laptopId}/breakEndTime`)]: fm.phase === 'break' ? fm.breakEndTime : 0,
-        [lobbyPath(`pomodoro/${fm.laptopId}/savedAt`)]: Date.now(),
+
+    // Write full doc so Firebase has the correct totalWorkMs on restore
+    update(ref(database), { [lobbyPath(`pomodoro/${fm.laptopId}`)]: {
+        claimedBy:    gameState.userId,
+        phase:        fm.phase === 'break' ? 'free-break' : 'free-work',
+        mode:         'free',
+        createdAt:    fm._createdAt || Date.now(),
+        endTime:      0,
+        totalWorkMs:  currentTotalMs,
+        breakEndTime: fm.phase === 'break' ? fm.breakEndTime : 0,
+        savedAt:      Date.now(),
+    }});
+
+    // Re-register onDisconnect with the current totalWorkMs so a sudden disconnect
+    // doesn't roll back to the last-saved value.
+    onDisconnect(ref(database, lobbyPath(`pomodoro/${fm.laptopId}`))).update({
+        phase:       'wait',
+        totalWorkMs: currentTotalMs,
+        savedAt:     { '.sv': 'timestamp' },
     });
 }
 
