@@ -3469,8 +3469,8 @@ body.is-mobile .yt-focus-block {
 }
 
 body.is-mobile .prayer-panel {
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
 }
 
 body.is-mobile .user-card {
@@ -3528,55 +3528,6 @@ body.is-mobile .prayer-overlay-bg {
 body.is-mobile .login-bg,
 body.is-mobile .lobby-bg {
     animation: none;
-}
-
-/* ── Azkar mobile optimisations ────────────────────────────────────
-   The azkar button has three expensive layers that run continuously:
-   1. azkarShimmer — animates background-position (non-composited repaint every frame)
-   2. azkarPulse   — continuous scale animation (still compositor work)
-   3. azkar-btn-glow — filter:blur(10px) creates a GPU-composited layer
-   Kill all three on mobile; the button still looks distinct via its gradient + border.
-   ─────────────────────────────────────────────────────────────────── */
-body.is-mobile .azkar-btn {
-    animation: none;
-}
-body.is-mobile .azkar-btn::before {
-    display: none;
-}
-body.is-mobile .azkar-btn-glow {
-    filter: none;
-}
-
-/* Azkar overlay fog: mirror the prayer-fog treatment (pause + reduce blur) */
-body.is-mobile .azkar-fog-layer {
-    animation-play-state: paused;
-    filter: blur(8px);
-}
-
-/* Azkar confirm popup + float btn + logout pill: reduce backdrop-filter */
-body.is-mobile .azkar-confirm {
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-}
-body.is-mobile .azkar-focus-float-btn {
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-}
-body.is-mobile .logout-pill {
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-}
-
-/* ── NUCLEAR: no glassmorphism on mobile ────────────────────────────
-   backdrop-filter is the single most expensive CSS property on mobile
-   GPUs — it requires compositing the entire background behind every
-   filtered element. One rule kills all of them. Elements keep their
-   semi-opaque backgrounds so they still look distinct against the game.
-   RULE: never add backdrop-filter to any selector that is visible on
-   mobile. This rule lives last so it beats all non-!important rules. */
-body.is-mobile * {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
 }
 
 /* ── وضع التجربة (siraj test link) ─────────────────────────────── */

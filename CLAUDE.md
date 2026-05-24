@@ -76,12 +76,6 @@ Mobile = `window.innerWidth < 1024`. Toggle with `setMobileClass()`. `body.is-mo
 
 **Critical CSS rule**: Never use `!important` on `transform` for `.focus-sounds-panel`. JS drag code sets `drawer.style.transform` inline, and `!important` silently beats inline styles.
 
-**No glassmorphism on mobile**: `body.is-mobile * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important }` — a single nuclear rule at the end of the mobile section kills all `backdrop-filter`. `backdrop-filter` is the most expensive CSS property on mobile GPUs. **Never add `backdrop-filter` to any selector that is visible on mobile.** If you add a new UI panel, do not give it a `backdrop-filter` in its mobile variant; the nuclear rule already covers it.
-
-**No particles on mobile**: Wind particles (`WIND_PARTICLE_COUNT_MOBILE = 0`) and dust particles (`spawnDust` returns early on mobile) are disabled entirely. Do not re-enable them on mobile.
-
-**No connection lines on mobile**: `drawConnections()` returns early on mobile. The dashed channel-lines between players are desktop-only.
-
 **Focus sounds panel**: Desktop only. `body.is-mobile .focus-sounds-panel { display: none !important }` — the mobile sounds drawer has been removed entirely. Do not re-add it.
 
 **Focus mode** (`setMobileFocusMode(active)`): Hides joystick + user card during work phase. Joystick gets `.focus-hidden` class → opacity 0. User card slides off-screen with `transform: translateY(-140%)` + `pointer-events: none`.
@@ -344,7 +338,6 @@ Sugar falls from top. `progress = (serverNow() - spawnTime) / fallDuration` — 
 | Time picker scroll wheel does nothing | `deltaMode: 1` (physical mouse = lines) sends `deltaY: 3`; old 50px threshold never reached | Normalize: `deltaMode===1 → deltaY*40`; threshold 40px → one click = one unit |
 | Siraj time spoof doesn't reset completion | After setting fake time, old Firebase completion still hides the button | Clear `gameState.azkar.completed = {}` and write `null` to Firebase on apply |
 | Prayer gradient glow stretched on mobile portrait | `ellipse` radial gradients look like ovals on narrow screens | `body.is-mobile .prayer-overlay-bg::after { display: none }` |
-| New panel causes mobile lag | Forgot the no-glassmorphism rule — added `backdrop-filter` on an element visible on mobile | Never add `backdrop-filter` to mobile-visible elements. The nuclear rule `body.is-mobile * { backdrop-filter: none !important }` only helps if the new rule doesn't have `!important` itself |
 
 ---
 
@@ -405,7 +398,7 @@ drawFocusMask: uses physical mCanvas; player positions computed with * dpr
 2. **Styling**: Add CSS in `style.css`. Add `body.is-mobile` variants if needed. Never `!important` on transforms.
 3. **Logic**: Add to `game.js`. Wire Firebase sync if the state should persist.
 4. **Firebase keys**: Follow existing path patterns through `lobbyPath()`.
-5. **Mobile**: Test by resizing browser to <1024px. Check joystick, leave button, float button positions. No sounds drawer on mobile. **No `backdrop-filter` on mobile-visible elements** — the nuclear rule (`body.is-mobile * { backdrop-filter: none !important }`) handles removal automatically, but don't add `!important` to any mobile `backdrop-filter` rule or it will fight the nuclear rule.
+5. **Mobile**: Test by resizing browser to <1024px. Check joystick, leave button, float button positions. No sounds drawer on mobile.
 6. **Cleanup**: Store unsubscribe functions, call them on logout/leave/cleanup.
 7. **Edge case scan** (MANDATORY after every new feature): Think through:
    - What happens if a user has this active and opens a pomo? (and vice versa)

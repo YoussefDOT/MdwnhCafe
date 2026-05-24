@@ -1396,7 +1396,7 @@ const POSITION_LERP_SPEED = 0.22;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.0;
 const WIND_PARTICLE_COUNT = 30;      // desktop
-const WIND_PARTICLE_COUNT_MOBILE = 0;  // mobile — disabled (performance)
+const WIND_PARTICLE_COUNT_MOBILE = 10; // mobile (performance)
 
 // Easing Functions
 const easeOutExpo = (x) => x === 1 ? 1 : 1 - Math.pow(2, -10 * x);
@@ -4564,7 +4564,6 @@ function updateAnimation() {
 }
 
 function spawnDust(x, y, amount, isDragging = false) {
-    if (isMobile()) return; // particles disabled on mobile for performance
     for (let i = 0; i < amount; i++) {
         gameState.dustParticles.push({
             x: x + (Math.random() - 0.5) * 30,
@@ -7292,7 +7291,6 @@ function drawFocusFog(W, H) {
 }
 
 function drawConnections() {
-    if (isMobile()) return; // decorative — skip on mobile for performance
     const ctx = gameState.ctx;
     const channelGroups = {};
     for (const player of Object.values(gameState.players)) {
@@ -10744,21 +10742,17 @@ function updateAzkarFinishTimer() {
     if (!az.active) return;
     const elapsed = Date.now() - az.startTime;
     const remaining = Math.max(0, az.minLockMs - elapsed);
-    // Cache element refs once per overlay open to avoid 60fps getElementById lookups
-    if (!az._finishBtn)  az._finishBtn  = document.getElementById('azkar-finish-btn');
-    if (!az._timerEl)    az._timerEl    = document.getElementById('azkar-finish-timer');
-    const btn = az._finishBtn;
-    const timerEl = az._timerEl;
+    const btn = document.getElementById('azkar-finish-btn');
+    const timerEl = document.getElementById('azkar-finish-timer');
     if (remaining <= 0) {
-        if (btn && !btn.classList.contains('unlocked')) btn.classList.add('unlocked');
-        if (timerEl && timerEl.textContent !== '') timerEl.textContent = '';
+        if (btn) { btn.removeAttribute('disabled'); btn.classList.add('unlocked'); }
+        if (timerEl) timerEl.textContent = '';
     } else {
         const m = Math.floor(remaining / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
-        const newText = `${m}:${String(s).padStart(2, '0')}`;
+        if (timerEl) timerEl.textContent = `${m}:${String(s).padStart(2, '0')}`;
         // Don't use disabled — it leaks taps on iOS. Use class only; click handler checks .unlocked.
-        if (btn && btn.classList.contains('unlocked')) btn.classList.remove('unlocked');
-        if (timerEl && timerEl.textContent !== newText) timerEl.textContent = newText;
+        if (btn) { btn.removeAttribute('disabled'); btn.classList.remove('unlocked'); }
     }
 }
 
@@ -10766,8 +10760,6 @@ function closeAzkarOverlay(markDone) {
     const az = gameState.azkar;
     if (!az.active) return;
     az.active = false;
-    az._finishBtn = null;
-    az._timerEl   = null;
 
     // Resume pomodoro endTime (solo)
     if (gameState.pomodoro.active && gameState.sharedPomo.phase !== 'active') {
