@@ -10742,17 +10742,21 @@ function updateAzkarFinishTimer() {
     if (!az.active) return;
     const elapsed = Date.now() - az.startTime;
     const remaining = Math.max(0, az.minLockMs - elapsed);
-    const btn = document.getElementById('azkar-finish-btn');
-    const timerEl = document.getElementById('azkar-finish-timer');
+    // Cache element refs once per overlay open to avoid 60fps getElementById lookups
+    if (!az._finishBtn)  az._finishBtn  = document.getElementById('azkar-finish-btn');
+    if (!az._timerEl)    az._timerEl    = document.getElementById('azkar-finish-timer');
+    const btn = az._finishBtn;
+    const timerEl = az._timerEl;
     if (remaining <= 0) {
-        if (btn) { btn.removeAttribute('disabled'); btn.classList.add('unlocked'); }
-        if (timerEl) timerEl.textContent = '';
+        if (btn && !btn.classList.contains('unlocked')) btn.classList.add('unlocked');
+        if (timerEl && timerEl.textContent !== '') timerEl.textContent = '';
     } else {
         const m = Math.floor(remaining / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
-        if (timerEl) timerEl.textContent = `${m}:${String(s).padStart(2, '0')}`;
+        const newText = `${m}:${String(s).padStart(2, '0')}`;
         // Don't use disabled — it leaks taps on iOS. Use class only; click handler checks .unlocked.
-        if (btn) { btn.removeAttribute('disabled'); btn.classList.remove('unlocked'); }
+        if (btn && btn.classList.contains('unlocked')) btn.classList.remove('unlocked');
+        if (timerEl && timerEl.textContent !== newText) timerEl.textContent = newText;
     }
 }
 
@@ -10760,6 +10764,8 @@ function closeAzkarOverlay(markDone) {
     const az = gameState.azkar;
     if (!az.active) return;
     az.active = false;
+    az._finishBtn = null;
+    az._timerEl   = null;
 
     // Resume pomodoro endTime (solo)
     if (gameState.pomodoro.active && gameState.sharedPomo.phase !== 'active') {

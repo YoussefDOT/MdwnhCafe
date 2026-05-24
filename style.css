@@ -3530,6 +3530,43 @@ body.is-mobile .lobby-bg {
     animation: none;
 }
 
+/* ── Azkar mobile optimisations ────────────────────────────────────
+   The azkar button has three expensive layers that run continuously:
+   1. azkarShimmer — animates background-position (non-composited repaint every frame)
+   2. azkarPulse   — continuous scale animation (still compositor work)
+   3. azkar-btn-glow — filter:blur(10px) creates a GPU-composited layer
+   Kill all three on mobile; the button still looks distinct via its gradient + border.
+   ─────────────────────────────────────────────────────────────────── */
+body.is-mobile .azkar-btn {
+    animation: none;
+}
+body.is-mobile .azkar-btn::before {
+    display: none;
+}
+body.is-mobile .azkar-btn-glow {
+    filter: none;
+}
+
+/* Azkar overlay fog: mirror the prayer-fog treatment (pause + reduce blur) */
+body.is-mobile .azkar-fog-layer {
+    animation-play-state: paused;
+    filter: blur(8px);
+}
+
+/* Azkar confirm popup + float btn + logout pill: reduce backdrop-filter */
+body.is-mobile .azkar-confirm {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+body.is-mobile .azkar-focus-float-btn {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+body.is-mobile .logout-pill {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
 /* ── وضع التجربة (siraj test link) ─────────────────────────────── */
 .siraj-test-link {
     position: fixed;
