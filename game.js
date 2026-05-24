@@ -8436,6 +8436,7 @@ function handleHostLeft() {
 
     const departedHostId = sp.sessionId;
     const remaining = sp.activeGroupMembers.filter(uid => uid !== departedHostId);
+    delete sp.coopAnim.members[departedHostId];
 
     if (remaining.length < 2) {
         // We're alone — drop shared state but keep the pomo running
@@ -8480,6 +8481,19 @@ function handleHostLeft() {
         };
         update(ref(database), { [spPath(`live/${gameState.userId}`)]: liveDoc });
         onDisconnect(ref(database, spPath(`live/${gameState.userId}`))).remove();
+        if (gameState.pomodoro.laptopId != null) {
+            update(ref(database), { [lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)]: {
+                claimedBy:    gameState.userId,
+                phase:        gameState.pomodoro.phase,
+                endTime:      gameState.pomodoro.endTime,
+                workDuration: gameState.pomodoro.workDuration,
+                breakDuration: gameState.pomodoro.breakDuration || 5,
+                sessionsLeft:  gameState.pomodoro.sessionsLeft  || 1,
+                totalSessions: gameState.pomodoro.totalSessions || 1,
+                createdAt:     gameState.pomodoro.createdAt || Date.now(),
+            }});
+            onDisconnect(ref(database, lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`))).remove();
+        }
         setupSpLiveListener(gameState.userId);
         showSpInfoToast('أصبحت مضيف الجلسة');
     } else {
@@ -9285,7 +9299,7 @@ function _initCoopMem(idx, total) {
         stateTimer: 55 + Math.random() * 110,
         stateProgress: 0,
         orbitAngle: Math.random() * Math.PI * 2,
-        dxBlend: 0, dyBlend: 0,
+        dxBlend: homeX, dyBlend: homeY,
         scaleXBlend: 1, scaleYBlend: 1,
         angleBlend: 0,
         prevState: 'idle',
@@ -10020,6 +10034,15 @@ function dismissPrayerOverlay() {
             updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}/endTime`)] = gameState.pomodoro.endTime;
             update(ref(database), updates);
         }
+    }
+
+    // If the coop pomo transitioned to 'wait' (kidnap pending) while prayer was up,
+    // the kidnap animation was blocked. Trigger it now that prayer is dismissed.
+    if (gameState.sharedPomo.phase === 'active' &&
+        gameState.pomodoro.phase === 'wait' &&
+        !gameState.anim.active) {
+        const _kLaptop = gameState.laptops.find(l => l.id === gameState.pomodoro.laptopId);
+        if (_kLaptop) startKidnapAnimation(_kLaptop);
     }
 
     // Stop athan if still playing
