@@ -858,7 +858,7 @@ body {
     backdrop-filter: blur(40px) saturate(160%);
     -webkit-backdrop-filter: blur(40px) saturate(160%);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 18px;
+    border-radius: 60px;
     padding: 18px 22px 14px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.04) inset;
     z-index: 1001;
@@ -2054,7 +2054,7 @@ body.is-mobile .focus-sounds-panel {
     right: 0 !important;
     width: 100% !important;
     max-height: 82vh;
-    border-radius: 60px 60px 0 0 !important;
+    border-radius: 60px !important;
     transform: translateY(calc(100% - 72px));
     padding: 0 16px 16px !important;
     overflow: hidden;

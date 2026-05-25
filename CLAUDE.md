@@ -349,6 +349,7 @@ Sugar falls from top. `progress = (serverNow() - spawnTime) / fallDuration` — 
 - **Typography**: weight `600` primary, `rgba(255,255,255,0.42)` secondary
 - **Spring transitions**: `cubic-bezier(0.34, 1.56, 0.64, 1)`
 - **Pills**: `border-radius: 50px` for action buttons
+- **Panels/drawers**: `border-radius: 60px` — all corners, including the mobile bottom-sheet sounds drawer
 - **Colors**: dark theme, no bright whites, accent `rgba(255,255,255,0.85)`
 - **Arabic text**: always RTL-compatible; use `direction: rtl` where needed
 
