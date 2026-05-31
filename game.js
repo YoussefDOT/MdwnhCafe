@@ -148,19 +148,26 @@ function parseDiscordOauthHash() {
 // Returns 'male' | 'female' | null (null => caller shows first-time chooser).
 async function resolveUserLobby(discordId) {
     const snap = await get(ref(database, `users/${discordId}`));
-    const data = snap.val();
-    if (!data) return null;
+    const data = snap.val() || {};
     if (data.lobby && LOBBY_CONFIG[data.lobby]) return data.lobby;
     if (data.categoryName) {
         for (const [key, cfg] of Object.entries(LOBBY_CONFIG)) {
             if (cfg.categoryName === data.categoryName) return key;
         }
+        // categoryName is from a non-male/female category (e.g. admin) — ignore it.
+    }
+    // Fallback: localStorage preserves the user's choice across bot-driven Firebase overwrites.
+    const cached = localStorage.getItem(`mdwnh_discord_lobby_${discordId}`);
+    if (cached && LOBBY_CONFIG[cached]) {
+        update(ref(database), { [`users/${discordId}/lobby`]: cached });
+        return cached;
     }
     return null;
 }
 
 async function enterGameAsDiscordUser(user, lobby) {
     gameState.selectedLobby = lobby;
+    localStorage.setItem(`mdwnh_discord_lobby_${user.id}`, lobby);
 
     const snap = await get(ref(database, `users/${user.id}`));
     const existing = snap.val() || {};
