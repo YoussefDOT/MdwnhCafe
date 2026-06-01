@@ -4474,3 +4474,32 @@ body.is-mobile .azkar-focus-float-btn.evening {
     color: rgba(140,160,255,0.92);
 }
 body.is-mobile .azkar-focus-float-btn.hidden { display: none; }
+
+/* ── Edge bokeh overlay ─────────────────────────────────────────────────────── */
+/* Hidden by default; JS shows it on desktop only when not in a minigame.       */
+/* backdrop-filter blurs the game canvas at the edges; mask cuts it to a ring.  */
+#edge-bokeh {
+    display: none;
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    backdrop-filter: blur(10px) saturate(1.15);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    -webkit-mask-image: radial-gradient(
+        ellipse 62% 62% at 50% 50%,
+        transparent  0%,
+        transparent 56%,
+        rgba(0,0,0,0.28) 70%,
+        rgba(0,0,0,0.72) 84%,
+        black 96%
+    );
+    mask-image: radial-gradient(
+        ellipse 62% 62% at 50% 50%,
+        transparent  0%,
+        transparent 56%,
+        rgba(0,0,0,0.28) 70%,
+        rgba(0,0,0,0.72) 84%,
+        black 96%
+    );
+}

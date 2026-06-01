@@ -1177,6 +1177,7 @@ const gameState = {
     selectedUser: null,
     positionInitialized: false,
     windParticles: [],
+    ambientMotes: [],
     laptops: [],
     activeLaptop: null,
     isLockedIn: false,
@@ -2144,6 +2145,7 @@ function init() {
     setupLobbySelection();   // ← shows lobby screen first; calls setupUserSelection internally
     setupModal();
     initWindParticles();
+    initAmbientMotes();
     initLaptops();
     initDiscordOAuth();      // Discord button on lobby; auto-resume if session exists
 }
@@ -2179,9 +2181,69 @@ function initWindParticles() {
             length: 2 + Math.floor(Math.random() * 3),
             speed: 3 + Math.random() * 5,
             opacity: 0.1 + Math.random() * 0.4,
-            parallax: 1.3 + Math.random() * 0.6
+            parallax: 1.3 + Math.random() * 0.6,
+            twinklePhase: Math.random() * Math.PI * 2,
+            twinkleSpeed: 0.6 + Math.random() * 1.4
         });
     }
+}
+
+// Gentle world-space dust motes that drift through the office — magical "alive" feel.
+// Desktop only (skipped entirely on mobile for performance).
+function initAmbientMotes() {
+    if (isMobile()) return;
+    const count = 22;
+    const minX = -BG_WIDTH / 2, maxX = BG_WIDTH / 2;
+    const minY = -BG_HEIGHT / 2, maxY = BG_HEIGHT * 1.5;
+    for (let i = 0; i < count; i++) {
+        gameState.ambientMotes.push({
+            x: minX + Math.random() * (maxX - minX),
+            y: minY + Math.random() * (maxY - minY),
+            r: 1.2 + Math.random() * 2.2,
+            driftX: (Math.random() - 0.5) * 0.18,
+            driftY: -0.05 - Math.random() * 0.12,
+            phase: Math.random() * Math.PI * 2,
+            speed: 0.5 + Math.random() * 1.2,
+            baseAlpha: 0.12 + Math.random() * 0.22
+        });
+    }
+}
+
+function updateAmbientMotes() {
+    if (!gameState.ambientMotes.length) return;
+    const minX = -BG_WIDTH / 2, maxX = BG_WIDTH / 2;
+    const minY = -BG_HEIGHT / 2, maxY = BG_HEIGHT * 1.5;
+    const sway = Date.now() * 0.0006;
+    for (const m of gameState.ambientMotes) {
+        m.x += (m.driftX + Math.sin(sway + m.phase) * 0.12) * gameState.dtFactor;
+        m.y += m.driftY * gameState.dtFactor;
+        // Wrap softly around the world so they never run out
+        if (m.y < minY - 20) { m.y = maxY + 20; m.x = minX + Math.random() * (maxX - minX); }
+        if (m.x < minX - 20) m.x = maxX + 20;
+        else if (m.x > maxX + 20) m.x = minX - 20;
+    }
+}
+
+function drawAmbientMotes() {
+    if (!gameState.ambientMotes.length) return;
+    const ctx = gameState.ctx;
+    const tw = Date.now() * 0.002;
+    ctx.save();
+    for (const m of gameState.ambientMotes) {
+        const flicker = 0.55 + 0.45 * Math.sin(tw * m.speed + m.phase);
+        const a = m.baseAlpha * flicker;
+        // Soft halo
+        ctx.fillStyle = `rgba(255, 248, 224, ${a * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.r * 2.4, 0, Math.PI * 2);
+        ctx.fill();
+        // Bright core
+        ctx.fillStyle = `rgba(255, 252, 238, ${a})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
 }
 
 function initLaptops() {
@@ -4909,6 +4971,20 @@ function gameLoop(timestamp) {
     if (isMobile() && gameState.dtFactor > 2) gameState.dtFactor = 2;
 
     try {
+        // Edge bokeh: hide during all three minigames (they each return early before render()).
+        // Must run first so the div state is always correct regardless of which path we take.
+        if (!isMobile()) {
+            const _inMini =
+                (gameState.laptopBoss.active && gameState.laptopBoss.session &&
+                    (gameState.laptopBoss.session.phase === 'active' || gameState.laptopBoss.session.phase === 'finished')) ||
+                (gameState.race.active && gameState.race.session &&
+                    (gameState.race.session.phase === 'race' || gameState.race.session.phase === 'finished')) ||
+                (gameState.coffee.active && gameState.coffee.session &&
+                    (gameState.coffee.session.phase === 'active' || gameState.coffee.session.phase === 'finished'));
+            const _bokeh = document.getElementById('edge-bokeh');
+            if (_bokeh) _bokeh.style.display = _inMini ? 'none' : 'block';
+        }
+
         updatePomodoro();
         updateTeleportAnim();
         updateCoffeeTeleportAnim();
@@ -4952,6 +5028,7 @@ function gameLoop(timestamp) {
         updateNametags();
         updateAvatarColorFade();
         updateWindParticles();
+        updateAmbientMotes();
         updateDustParticles();
         updateInteractions();
         updateSharedPomoProximity();
@@ -4987,6 +5064,8 @@ function render() {
     ctx.fillStyle = COLORS.black;
     ctx.fillRect(0, 0, W, H);
 
+    drawBackgroundAtmosphere(W, H);
+
     ctx.save();
     ctx.translate(W / 2, H / 2);
     ctx.scale(gameState.zoom, gameState.zoom);
@@ -5007,6 +5086,7 @@ function render() {
         drawKidnapLine();
     }
 
+    drawAmbientMotes();
     drawDustParticles();
     drawPlayers(false);
     drawCoopEmojiFloats();
@@ -5032,6 +5112,8 @@ function render() {
 
     drawWindParticles(W, H);
     drawFocusFog(W, H);
+    drawSunRays(W, H);
+    drawVignette(W, H);
     drawTeleportOverlay(W, H);
 
     ctx.restore();  // undo DPR scale
@@ -7455,6 +7537,7 @@ function drawWindParticles(W, H) {
     // Logical viewport dimensions (ctx is DPR-scaled when called from render)
     const w = W || canvas.width  / (gameState.dpr || 1);
     const h = H || canvas.height / (gameState.dpr || 1);
+    const twinkleClock = Date.now() * 0.002;
     ctx.save();
     gameState.windParticles.forEach(p => {
         const offsetX = gameState.camera.x * (p.parallax - 1.0) * gameState.zoom;
@@ -7463,11 +7546,107 @@ function drawWindParticles(W, H) {
         let drawY = (p.y + offsetY) % h;
         if (drawX < 0) drawX += w;
         if (drawY < 0) drawY += h;
-        ctx.fillStyle = `rgba(255, 255, 255, ${p.opacity})`;
+        // Gentle twinkle so the ambient motes shimmer instead of sitting flat
+        const tw = 0.65 + 0.35 * Math.sin(twinkleClock * p.twinkleSpeed + p.twinklePhase);
+        ctx.fillStyle = `rgba(255, 255, 255, ${p.opacity * tw})`;
         for (let i = 0; i < p.length; i++) {
             ctx.fillRect(drawX + (i * p.size), drawY, p.size, p.size);
         }
     });
+    ctx.restore();
+}
+
+// ── Ambient void atmosphere ──────────────────────────────────────────────────
+// Deep colour blobs drawn in screen-space into the black void around the world.
+// They parallax with the camera so the empty space feels dimensional.
+function drawBackgroundAtmosphere(W, H) {
+    const ctx  = gameState.ctx;
+    const cam  = gameState.camera;
+    const zoom = gameState.zoom;
+    const px   = 0.14;               // parallax factor (0 = screen-fixed, 1 = world-speed)
+    const ox   = -cam.x * zoom * px;
+    const oy   = -cam.y * zoom * px;
+
+    ctx.save();
+
+    if (!isMobile()) {
+        // Deep indigo pool — top-left void
+        const g1 = ctx.createRadialGradient(
+            W * 0.05 + ox,        H * 0.10 + oy,        0,
+            W * 0.05 + ox,        H * 0.10 + oy,        W * 0.62
+        );
+        g1.addColorStop(0, 'rgba(42, 18, 78, 0.58)');
+        g1.addColorStop(1, 'rgba(8, 4, 18, 0)');
+        ctx.fillStyle = g1;
+        ctx.fillRect(0, 0, W, H);
+
+        // Midnight blue — bottom-right void
+        const g2 = ctx.createRadialGradient(
+            W * 0.94 + ox * 0.75, H * 0.88 + oy * 0.75, 0,
+            W * 0.94 + ox * 0.75, H * 0.88 + oy * 0.75, W * 0.54
+        );
+        g2.addColorStop(0, 'rgba(10, 24, 68, 0.52)');
+        g2.addColorStop(1, 'rgba(4, 8, 28, 0)');
+        ctx.fillStyle = g2;
+        ctx.fillRect(0, 0, W, H);
+    } else {
+        // Mobile: single cheaper blob
+        const gm = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(W, H) * 0.7);
+        gm.addColorStop(0, 'rgba(30, 14, 58, 0.45)');
+        gm.addColorStop(1, 'rgba(6, 3, 14, 0)');
+        ctx.fillStyle = gm;
+        ctx.fillRect(0, 0, W, H);
+    }
+
+    ctx.restore();
+}
+
+// ── Warm sun rays ────────────────────────────────────────────────────────────
+// A single large radial gradient anchored off the top-right, giving the scene
+// a warm golden wash. Mild camera parallax makes it "float" behind the world.
+function drawSunRays(W, H) {
+    if (isMobile()) return;   // skip on mobile — one fewer gradient per frame
+    const ctx  = gameState.ctx;
+    const cam  = gameState.camera;
+    const zoom = gameState.zoom;
+    const px   = 0.055;              // very gentle — sun is "far away"
+    const ox   = -cam.x * zoom * px;
+    const oy   = -cam.y * zoom * px;
+
+    // Source: just off the top-right corner
+    const cx = W * 0.90 + ox;
+    const cy = H * -0.08 + oy;
+    const r  = Math.max(W, H) * 1.55;
+
+    ctx.save();
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0,    'rgba(255, 220, 130, 0.16)');
+    grad.addColorStop(0.25, 'rgba(255, 195,  85, 0.10)');
+    grad.addColorStop(0.55, 'rgba(255, 165,  50, 0.04)');
+    grad.addColorStop(1,    'rgba(255, 140,  30, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+}
+
+let _vignetteCache = null; // { w, h, grad } — rebuilt only on resize
+function drawVignette(W, H) {
+    const ctx = gameState.ctx;
+    const canvas = gameState.canvas;
+    const w = W || canvas.width  / (gameState.dpr || 1);
+    const h = H || canvas.height / (gameState.dpr || 1);
+    if (!_vignetteCache || _vignetteCache.w !== w || _vignetteCache.h !== h) {
+        const grad = ctx.createRadialGradient(
+            w / 2, h / 2, Math.min(w, h) * 0.42,
+            w / 2, h / 2, Math.max(w, h) * 0.72
+        );
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.34)');
+        _vignetteCache = { w, h, grad };
+    }
+    ctx.save();
+    ctx.fillStyle = _vignetteCache.grad;
+    ctx.fillRect(0, 0, w, h);
     ctx.restore();
 }
 
@@ -7529,25 +7708,39 @@ function drawConnections() {
         if (!channelGroups[player.channelName]) channelGroups[player.channelName] = [];
         channelGroups[player.channelName].push(player);
     }
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.setLineDash([5, 5]);
-    ctx.lineWidth = 2;
+
+    // Animated flowing dashes + gentle breathing glow — makes social links feel alive
+    const t = Date.now() * 0.001;
+    const flow = -(Date.now() * 0.02) % 14;       // dashes drift along the line
+    const pulse = 0.5 + 0.5 * Math.sin(t * 1.6);  // 0..1 breathing
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineDashOffset = flow;
+    ctx.setLineDash([4, 10]);
     for (const players of Object.values(channelGroups)) {
         if (players.length > 1) {
             for (let i = 0; i < players.length; i++) {
                 for (let j = i + 1; j < players.length; j++) {
                     const p1 = players[i], p2 = players[j];
-                    ctx.beginPath();
                     const pos1 = getPlayerRenderPos(p1);
                     const pos2 = getPlayerRenderPos(p2);
+                    ctx.beginPath();
                     ctx.moveTo(pos1.x, pos1.y);
                     ctx.lineTo(pos2.x, pos2.y);
+                    // Soft teal glow underlay
+                    ctx.strokeStyle = `rgba(59, 185, 171, ${0.10 + 0.10 * pulse})`;
+                    ctx.lineWidth = 5;
+                    ctx.stroke();
+                    // Bright flowing dashes on top
+                    ctx.strokeStyle = `rgba(220, 245, 240, ${0.22 + 0.16 * pulse})`;
+                    ctx.lineWidth = 2;
                     ctx.stroke();
                 }
             }
         }
     }
     ctx.setLineDash([]);
+    ctx.restore();
 }
 
 function blendHexColors(fromHex, toHex, t) {
@@ -7603,6 +7796,13 @@ function drawPlayers(onlyLocal = false) {
             workAngle = Math.sin(workT * 0.5) * 0.08;
             workScaleY = 1.0 + Math.sin(workT) * 0.04;
             workScaleX = 1.0 - Math.sin(workT) * 0.04;
+        } else if (!tpData && !player.isMoving) {
+            // Idle breathing — keeps standing avatars subtly alive.
+            // Per-player phase offset so the crowd doesn't breathe in unison.
+            const breatheT = Date.now() * 0.0022 + (player.bobTime || 0) * 0 + (player._breathePhase ?? (player._breathePhase = Math.random() * Math.PI * 2));
+            const breathe = Math.sin(breatheT);
+            workScaleY = 1.0 + breathe * 0.018;
+            workScaleX = 1.0 - breathe * 0.012;
         }
 
         // Coop animation: read lerped blend values computed in updateCoopAnimation
@@ -7631,6 +7831,23 @@ function drawPlayers(onlyLocal = false) {
         const ringColor = isCurrentUser ? COLORS.blue : '#ffffff';
         const mutedRing = '#8a8a8a';
 
+        // Soft contact shadow on the ground — shrinks/fades as the avatar bobs upward,
+        // so walking avatars feel like they lift off the floor. Cheap (one ellipse).
+        if (!tpData || tpFadeOut < 0.9) {
+            const lift = (player.bobOffset || 0) + Math.abs(workBob) + tpFly * 110;
+            const liftN = Math.min(1, lift / 24);
+            const shW = (PLAYER_SIZE * 0.46) * (1 - liftN * 0.32);
+            const shH = shW * 0.32;
+            const shGroundY = renderY + PLAYER_SIZE / 2 - 2;
+            ctx.save();
+            ctx.globalAlpha = (0.28 - liftN * 0.14) * (tpData ? (1 - tpFadeOut) : 1);
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.ellipse(screenX + coopDX, shGroundY, shW, shH, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
         ctx.save();
         if (tpFadeOut > 0.01) ctx.globalAlpha = 1 - tpFadeOut;
         ctx.translate(screenX + coopDX, screenY + workBob + coopDY + tpFlyOffsetY);
@@ -7640,6 +7857,22 @@ function drawPlayers(onlyLocal = false) {
         if (grayMix > 0.01) {
             ctx.filter = `saturate(${colorAlpha}) brightness(${0.72 + 0.28 * colorAlpha})`;
             ctx.globalAlpha = 0.55 + 0.45 * colorAlpha;
+        }
+
+        // Local-player ambient glow — a gentle breathing halo so "you" stand out.
+        // Desktop only (radial gradient per avatar is the costly bit); skipped on mobile.
+        if (isCurrentUser && !isMobile() && tpFadeOut < 0.5) {
+            const gt = Date.now() * 0.0018;
+            const glowPulse = 0.5 + 0.5 * Math.sin(gt);
+            const gr = PLAYER_SIZE / 2 + 10 + glowPulse * 6;
+            const glow = ctx.createRadialGradient(0, 0, PLAYER_SIZE / 2 - 4, 0, 0, gr);
+            glow.addColorStop(0, 'rgba(49, 178, 255, 0)');
+            glow.addColorStop(0.55, `rgba(49, 178, 255, ${0.10 + 0.06 * glowPulse})`);
+            glow.addColorStop(1, 'rgba(49, 178, 255, 0)');
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(0, 0, gr, 0, Math.PI * 2);
+            ctx.fill();
         }
 
         // Shared pomodoro group ring — drawn behind the avatar ring
