@@ -4982,7 +4982,18 @@ function gameLoop(timestamp) {
                 (gameState.coffee.active && gameState.coffee.session &&
                     (gameState.coffee.session.phase === 'active' || gameState.coffee.session.phase === 'finished'));
             const _bokeh = document.getElementById('edge-bokeh');
-            if (_bokeh) _bokeh.style.display = _inMini ? 'none' : 'block';
+            if (_bokeh) {
+                if (_inMini) {
+                    _bokeh.style.display = 'none';
+                } else {
+                    // Blur scales linearly with zoom: 0px at MIN_ZOOM, 10px at MAX_ZOOM
+                    const _zoomT = (gameState.zoom - MIN_ZOOM) / (MAX_ZOOM - MIN_ZOOM);
+                    const _blur  = Math.round(_zoomT * 10 * 10) / 10; // 0.0–10.0 px
+                    _bokeh.style.display = 'block';
+                    _bokeh.style.backdropFilter = `blur(${_blur}px) saturate(1.15)`;
+                    _bokeh.style.webkitBackdropFilter = `blur(${_blur}px) saturate(1.15)`;
+                }
+            }
         }
 
         updatePomodoro();
