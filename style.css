@@ -3496,6 +3496,10 @@ body.is-mobile .prayer-overlay-btn { padding: 14px 28px; font-size: 0.9rem; }
 /* ── Mobile tweaks for free mode ── */
 body.is-mobile .free-mode-panel { top: 16px; }
 body.is-mobile .free-timer-text { font-size: 5rem; }
+/* Push break prompt below the 3-button row (buttons bottom ≈ 186px + gap).
+   Panel starts at 16px; timer (80px) + label (~18px, mt:-6) ends at ~108px;
+   original margin-top was 14px → prompt at ~122px; needs to be at ~200px. */
+body.is-mobile .free-break-prompt { margin-top: 92px; }
 body.is-mobile .free-votes-pill { top: 124px; }
 
 /* ═══════════════════════════════════════════════════════
@@ -4449,20 +4453,24 @@ body.is-mobile .azkar-focus-float-btn {
     align-items: center;
     justify-content: center;
     position: fixed;
-    top: 14px;
-    right: 14px;
+    /* Center of the 3-button row — same height as leave + PiP */
+    top: 148px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
     z-index: 9500;
-    padding: 7px 14px;
+    /* Normalized pill to match انهاء الجلسة and الوضع المصغر exactly */
+    padding: 9px 18px;
     border-radius: 50px;
     border: 1px solid rgba(255,255,255,0.14);
     background: rgba(14,14,20,0.72);
     backdrop-filter: blur(16px);
     color: rgba(255,255,255,0.82);
     font-family: inherit;
-    font-size: 0.82rem;
-    font-weight: 700;
+    font-size: 0.80rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.25s ease;
     pointer-events: all;
 }
 body.is-mobile .azkar-focus-float-btn.morning {
@@ -4561,12 +4569,21 @@ body.is-mobile .azkar-focus-float-btn.hidden { display: none; }
    Timer ends at ~125px on mobile, so start the stack at 148px. */
 body.is-mobile .leave-wrap { top: 148px; left: 14px; }
 
+/* Mobile 3-button row: انهاء (left) | أذكار (center) | الوضع المصغر (right)
+   All at the same top, same pill height, below the big timer (~125px bottom).
+   ─────────────────────────────────────────────────────────────────────────── */
+/* انهاء الجلسة (leave-wrap already at top:148, left:14 from above) */
+
+/* الوضع المصغر — right side */
 body.is-mobile .pip-toggle-btn {
-    top: 212px;   /* 148 (leave) + ~36px leave pill + 28px gap — clears break prompt */
-    left: 14px;
-    padding: 8px 15px;
-    font-size: 0.76rem;
+    top: 148px;
+    left: auto;
+    right: 14px;
+    padding: 9px 18px;
+    font-size: 0.80rem;
+    transform: translateY(-6px);  /* restore default "hidden" state */
 }
+body.is-mobile .pip-toggle-btn.visible { transform: none; }
 body.is-mobile .pip-toggle-btn svg { width: 16px; height: 16px; }
 
 /* Blackout — parks the main page while a PiP window is floating. */
