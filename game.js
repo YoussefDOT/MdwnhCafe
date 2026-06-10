@@ -8305,10 +8305,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #07070a;
   border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.05);
   color: rgba(255,255,255,0.55); font-size: 13px; line-height: 1; cursor: pointer;
   display: flex; align-items: center; justify-content: center; padding: 0;
-  transition: background .18s, color .18s, transform .15s; }
-.pip-chip:hover { background: rgba(255,255,255,0.12); }
+  opacity: 0.38;
+  transition: background .18s, color .18s, transform .15s, opacity .18s; }
+.pip-chip:hover { background: rgba(255,255,255,0.12); opacity: 0.6; }
 .pip-chip:active { transform: scale(0.9); }
-.pip-chip.active { background: rgba(59,185,171,0.24); border-color: rgba(59,185,171,0.4); color: rgba(120,230,215,0.95); }
+.pip-chip.active { background: rgba(59,185,171,0.24); border-color: rgba(59,185,171,0.4); color: rgba(120,230,215,0.95); opacity: 1; }
 .pip-chip.pip-chip-more { font-size: 15px; color: rgba(255,255,255,0.6); }
 #pip-yt { display: flex; align-items: center; gap: 4px; padding: 5px 6px;
   border-radius: 50px; background: rgba(18,18,18,0.62);
@@ -8334,6 +8335,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #07070a;
 .pip-slider-row { display: flex; flex-direction: column; gap: 4px; }
 .pip-slider-row .lbl { display: flex; justify-content: space-between; align-items: center;
   font-size: 11px; font-weight: 600; }
+.pip-slider-row { opacity: 0.38; transition: opacity .18s; }
+.pip-slider-row.snd-on { opacity: 1; }
 .pip-slider-row .lbl .nm { color: rgba(255,255,255,0.6); }
 .pip-slider-row .lbl .nm.on { color: rgba(120,230,215,0.95); }
 .pip-pop input[type=range] { width: 100%; height: 4px; cursor: pointer; accent-color: rgba(59,185,171,0.9); }
@@ -8362,7 +8365,7 @@ function _pipBuildControlsHTML() {
         `<button class="pip-chip" data-sound="${key}" title="${label}" aria-label="${label}">${emoji}</button>`
     ).join('');
     const sliders = PIP_SOUND_CHIPS.map(([key, , label]) =>
-        `<div class="pip-slider-row"><div class="lbl"><span class="nm" data-snd-nm="${key}">${label}</span></div>` +
+        `<div class="pip-slider-row" data-snd-row="${key}"><div class="lbl"><span class="nm" data-snd-nm="${key}">${label}</span></div>` +
         `<input type="range" min="0" max="1" step="0.05" data-snd-vol="${key}"></div>`
     ).join('');
     return `
@@ -8633,6 +8636,10 @@ function _pipSyncControls() {
             const on = !!eng.sounds[chip.dataset.sound]?.active;
             if (chip.classList.contains('active') !== on) chip.classList.toggle('active', on);
         });
+        doc.querySelectorAll('.pip-slider-row[data-snd-row]').forEach(row => {
+            const on = !!eng.sounds[row.dataset.sndRow]?.active;
+            row.classList.toggle('snd-on', on);
+        });
     }
     const yt = gameState.focusYTPlayer;
     const playIcon = doc.getElementById('pip-yt-play');
@@ -8674,8 +8681,11 @@ function _pipWireControls(doc) {
         if (e) doc.querySelectorAll('input[data-snd-vol]').forEach(sl => {
             const key = sl.dataset.sndVol;
             sl.value = e.sounds[key]?.volume ?? 0.5;
+            const on = !!e.sounds[key]?.active;
             const nm = doc.querySelector(`.nm[data-snd-nm="${key}"]`);
-            if (nm) nm.classList.toggle('on', !!e.sounds[key]?.active);
+            if (nm) nm.classList.toggle('on', on);
+            const row = doc.querySelector(`.pip-slider-row[data-snd-row="${key}"]`);
+            if (row) row.classList.toggle('snd-on', on);
         });
         const open = !sndPop.classList.contains('show');
         closePops(sndPop); sndPop.classList.toggle('show', open);

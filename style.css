@@ -2970,24 +2970,23 @@ body.game-ready #prayer-panel { display: flex !important; flex-direction: column
 
 /* ── Next prayer section ── */
 .prayer-next { display: flex; flex-direction: column; gap: 4px; }
-.prayer-next-head {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px;
-}
 .prayer-next-label {
     font-size: 0.65rem; font-weight: 600;
     color: rgba(255,255,255,0.35);
     letter-spacing: 0.03em;
 }
-.prayer-next-countdown {
-    font-size: 0.66rem; font-weight: 700;
-    color: rgba(59,185,171,0.85);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
-}
 .prayer-next-row {
     display: flex; justify-content: space-between; align-items: baseline;
     padding: 0 2px;
+}
+.prayer-next-name-wrap {
+    display: flex; align-items: baseline; gap: 6px;
+}
+.prayer-next-countdown {
+    font-size: 0.72rem; font-weight: 700;
+    color: rgba(59,185,171,0.85);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
 }
 .prayer-next-name {
     font-size: 1.05rem; font-weight: 700;
