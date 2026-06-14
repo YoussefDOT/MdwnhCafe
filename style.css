@@ -3938,15 +3938,13 @@ body.is-mobile .mode-card-desc { font-size: 11px; }
     transition: opacity 0.3s ease;
 }
 .azkar-btn::before {
-    /* sweeping shimmer */
+    /* static sheen — the old sweeping shimmer animated background-position every
+       frame (a paint animation), which made the button flash on some browsers. */
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%);
-    background-size: 200% 100%;
-    background-position: 200% 0;
-    animation: azkarShimmer 3.2s ease-in-out infinite;
+    background: linear-gradient(120deg, transparent 35%, rgba(255,255,255,0.12) 50%, transparent 65%);
     pointer-events: none;
 }
 
@@ -4100,15 +4098,6 @@ body.is-mobile .mode-card-desc { font-size: 11px; }
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.65s ease;
-    /* Promote to a single stable GPU layer + isolate its paint. Without this the
-       stacked full-screen blurred fog layers flicker ("glitch in and out") on
-       browsers with weaker compositing (e.g. DuckDuckGo). */
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-    will-change: opacity;
-    isolation: isolate;
 }
 .azkar-overlay.active {
     opacity: 1;
@@ -4129,7 +4118,7 @@ body.is-mobile .mode-card-desc { font-size: 11px; }
     position: absolute; inset: 0;
     background: radial-gradient(ellipse at 50% 25%, rgba(80,160,235,0.22) 0%, transparent 55%),
                 radial-gradient(ellipse at 30% 80%, rgba(160,200,255,0.10) 0%, transparent 50%);
-    animation: prayerGlow 7s ease-in-out infinite alternate;
+    /* static — no prayerGlow animation (caused per-frame repaint flicker) */
 }
 .azkar-overlay[data-mode="evening"] .azkar-overlay-bg {
     /* same family as Isha */
@@ -4140,7 +4129,7 @@ body.is-mobile .mode-card-desc { font-size: 11px; }
     position: absolute; inset: 0;
     background: radial-gradient(ellipse at 50% 25%, rgba(30,60,180,0.20) 0%, transparent 55%),
                 radial-gradient(ellipse at 20% 75%, rgba(10,20,80,0.16) 0%, transparent 50%);
-    animation: prayerGlow 7s ease-in-out infinite alternate;
+    /* static — no prayerGlow animation (caused per-frame repaint flicker) */
 }
 body.is-mobile .azkar-overlay-bg::after { display: none; }
 
@@ -4148,15 +4137,15 @@ body.is-mobile .azkar-overlay-bg::after { display: none; }
     position: absolute; inset: -40%;
     pointer-events: none; z-index: 0;
 }
+/* Static blurred clouds — NOT animated. Animating a blur(40px) full-screen layer
+   forces the whole overlay to re-rasterize every frame, which drops/redraws GPU
+   tiles and makes the overlay (or parts of it) flash on Chrome / DuckDuckGo.
+   A static blur is rasterized once and stays put. */
 .azkar-fog-layer {
     position: absolute;
-    width: 220%; height: 180%;
-    top: -40%; left: -60%;
+    width: 200%; height: 160%;
+    top: -30%; left: -50%;
     border-radius: 50%;
-    animation: fogDrift ease-in-out infinite alternate;
-    will-change: transform;
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
     filter: blur(40px);
 }
 .azkar-overlay[data-mode="morning"] .azkar-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 50% 60%, rgba(120,170,235,0.10) 0%, transparent 55%); animation-duration: 11s; }
@@ -4209,6 +4198,12 @@ body.is-mobile .azkar-overlay-bg::after { display: none; }
     -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 32px), transparent 100%);
 }
 body.azkar-active { overflow: hidden; }
+/* The opaque azkar overlay fully covers the game canvas, but the canvas keeps
+   repainting at 60fps underneath. On some browsers (Chrome, DuckDuckGo) that
+   constant repaint contends with the overlay's compositing and makes the overlay
+   flash. Hide the canvas entirely while azkar is open — purely a safeguard, the
+   overlay is on top anyway. */
+body.azkar-active #game-canvas { display: none; }
 .azkar-list::-webkit-scrollbar { width: 6px; }
 .azkar-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 6px; }
 .azkar-list::-webkit-scrollbar-track { background: transparent; }
