@@ -2,12 +2,25 @@ import { database, ref, onValue, update, get, onDisconnect, set, remove, authRea
 
 // ─── Mobile detection ────────────────────────────────────────────────────────
 const MOBILE_BREAKPOINT = 1024;
-function isMobile() { return window.innerWidth < MOBILE_BREAKPOINT; }
+function isMobile() {
+    if (window.innerWidth < MOBILE_BREAKPOINT) return true;
+    // Some mobile browsers (DuckDuckGo, in-app webviews, "desktop site" mode)
+    // report a wide layout viewport even on a phone — which would wrongly give
+    // the desktop UI (no drawer). Fall back to the physical screen size: a
+    // coarse-pointer touch device whose smaller screen dimension is phone-sized
+    // is treated as mobile regardless of the reported innerWidth.
+    if (isTouchDevice()) {
+        const s = window.screen || {};
+        const shortSide = Math.min(s.width || Infinity, s.height || Infinity);
+        if (shortSide && shortSide < 760) return true;
+    }
+    return false;
+}
 
 // ─── Device-local settings keys (used before init() is called) ───────────────
 const SETTINGS_GRAPHICS_KEY = 'mdwnh_graphics_quality'; // 'auto' | 'low' | 'high'
 const SETTINGS_NAMES_KEY    = 'mdwnh_hide_names';        // '0' = show, '1' = hide
-const SETTINGS_JOYSTICK_KEY = 'mdwnh_joystick_mode';    // 'auto' | 'always'
+const SETTINGS_JOYSTICK_KEY = 'mdwnh_joystick_mode';    // 'auto' | 'always' | 'off'
 
 // ─── Touch / joystick detection ──────────────────────────────────────────────
 // `is-mobile` is width-based and drives the whole mobile layout. But the control
@@ -20,17 +33,23 @@ function isTouchDevice() {
         || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 }
 function getJoystickMode() {
-    return localStorage.getItem(SETTINGS_JOYSTICK_KEY) === 'always' ? 'always' : 'auto';
+    const v = localStorage.getItem(SETTINGS_JOYSTICK_KEY);
+    return (v === 'always' || v === 'off') ? v : 'auto';
 }
 function setJoystickMode(mode) {
-    localStorage.setItem(SETTINGS_JOYSTICK_KEY, mode === 'always' ? 'always' : 'auto');
+    const m = (mode === 'always' || mode === 'off') ? mode : 'auto';
+    localStorage.setItem(SETTINGS_JOYSTICK_KEY, m);
     updateJoystickVisibility();
 }
 // Should the control circle be shown right now?
 // auto   → any touch-capable device (incl. iPad landscape) or narrow viewport
 // always → forced on, even on a desktop (manual fallback)
+// off    → never shown, even on touch devices (manual override)
 function joystickShouldShow() {
-    return getJoystickMode() === 'always' || isMobile() || isTouchDevice();
+    const mode = getJoystickMode();
+    if (mode === 'off') return false;
+    if (mode === 'always') return true;
+    return isMobile() || isTouchDevice(); // auto
 }
 function updateJoystickVisibility() {
     document.body.classList.toggle('joystick-enabled', joystickShouldShow());
@@ -3083,15 +3102,44 @@ function resizeCanvas() {
     gameState.canvas.style.height = h + 'px';
 }
 
+function applyViewportLayout() {
+    resizeCanvas();
+    setMobileClass();
+}
+
 let _resizeTimer = null;
 window.addEventListener('resize', () => {
     if (_resizeTimer) clearTimeout(_resizeTimer);
     _resizeTimer = setTimeout(() => {
-        resizeCanvas();
-        setMobileClass();
+        applyViewportLayout();
         _resizeTimer = null;
     }, 150);
 });
+
+// Orientation flips (portrait↔landscape) are special: many mobile browsers report
+// stale innerWidth/innerHeight for a beat after the rotation, so a single resize can
+// fire with the wrong dimensions and leave the canvas/UI broken until refresh.
+// Re-apply the layout several times across the settle window to guarantee the final
+// dimensions stick. Cover all the events different browsers actually emit.
+function handleOrientationChange() {
+    applyViewportLayout();                 // immediate (may be stale)
+    [120, 300, 600].forEach(d => setTimeout(applyViewportLayout, d)); // after settle
+}
+window.addEventListener('orientationchange', handleOrientationChange);
+if (window.matchMedia) {
+    const _mqlPortrait = window.matchMedia('(orientation: portrait)');
+    const _onOrient = () => handleOrientationChange();
+    if (_mqlPortrait.addEventListener) _mqlPortrait.addEventListener('change', _onOrient);
+    else if (_mqlPortrait.addListener) _mqlPortrait.addListener(_onOrient);
+}
+// visualViewport tracks the *real* rendered viewport (accounts for browser chrome
+// collapsing on rotation) — its resize fires with correct dimensions.
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+        if (_resizeTimer) clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => { applyViewportLayout(); _resizeTimer = null; }, 150);
+    });
+}
 
 function setupControls() {
     window.addEventListener('keydown', (e) => {
@@ -9303,7 +9351,8 @@ function setupSettingsUI() {
         const mode = getJoystickMode();
         joystickBtn.dataset.value = mode;
         joystickBtn.classList.toggle('settings-toggle-on', mode === 'always');
-        if (joystickLabel) joystickLabel.textContent = mode === 'always' ? 'دائماً' : 'تلقائي';
+        joystickBtn.classList.toggle('settings-toggle-low', mode === 'off');
+        if (joystickLabel) joystickLabel.textContent = mode === 'always' ? 'دائماً' : (mode === 'off' ? 'مغلقة' : 'تلقائي');
     }
 
     function _reflectGraphics() {
@@ -9347,7 +9396,8 @@ function setupSettingsUI() {
 
     if (joystickBtn) {
         joystickBtn.addEventListener('click', () => {
-            setJoystickMode(getJoystickMode() === 'always' ? 'auto' : 'always');
+            const cycle = { auto: 'always', always: 'off', off: 'auto' };
+            setJoystickMode(cycle[getJoystickMode()] || 'auto');
             _reflectJoystick();
         });
     }
@@ -11590,14 +11640,17 @@ function initPrayerSystem() {
         if (drawer && yt) drawer.appendChild(yt);
     }
 
-    // Read location from Firebase (city + country only)
+    // Read location from Firebase (city + country only — exact coords are never stored)
     get(ref(database, `users/${gameState.userId}/prayerLocation`)).then(snap => {
         const loc = snap.val();
         if (loc && (loc.city || loc.country)) {
-            // Restore persisted lat/lon (from automatic location) for precise API calls
-            if (loc.lat != null && loc.lon != null) {
-                loc._lat = loc.lat;
-                loc._lon = loc.lon;
+            // Privacy migration: scrub any legacy lat/lon left in this user's record
+            // from older builds. Rewrite the node with city/country only.
+            if (loc.lat != null || loc.lon != null) {
+                set(ref(database, `users/${gameState.userId}/prayerLocation`), {
+                    city: loc.city || '', country: loc.country || ''
+                }).catch(() => {});
+                delete loc.lat; delete loc.lon;
             }
             gameState.prayer.location = loc;
             document.getElementById('prayer-blur-overlay')?.classList.add('hidden');
@@ -12169,9 +12222,9 @@ function setupPrayerLocationModal() {
             }
             const loc = { city, country };
             loc._lat = coords.lat; loc._lon = coords.lon;
-            // Persist lat/lon to Firebase for automatic location so precise
-            // coords survive reloads (auto-detected city is often generic)
-            savePrayerLocation(loc, true);
+            // Only city/country are saved to Firebase; lat/lon stay in memory
+            // for this session's accurate API calls (privacy: never persist coords).
+            savePrayerLocation(loc);
             modal.classList.add('hidden');
             if (statusEl) statusEl.textContent = '';
         } catch (e) {
@@ -12222,17 +12275,15 @@ function setupPrayerLocationModal() {
     });
 }
 
-function savePrayerLocation(loc, persistCoords) {
+function savePrayerLocation(loc) {
     gameState.prayer.location = loc;
     gameState.prayer.lastFetchDate = null; // force re-fetch
     gameState.prayer._sirajOverrideApplied = false;
-    // Save city + country; also persist lat/lon for automatic location
+    // Privacy: ONLY city + country are ever written to Firebase. Exact lat/lon are
+    // never persisted — they stay in memory (loc._lat/_lon) for this session only.
+    // `set` (not update) replaces the whole node so any legacy lat/lon is wiped.
     const fbData = { city: loc.city || '', country: loc.country || '' };
-    if (persistCoords && loc._lat != null && loc._lon != null) {
-        fbData.lat = loc._lat;
-        fbData.lon = loc._lon;
-    }
-    update(ref(database), { [`users/${gameState.userId}/prayerLocation`]: fbData });
+    set(ref(database, `users/${gameState.userId}/prayerLocation`), fbData);
     document.getElementById('prayer-blur-overlay')?.classList.add('hidden');
     fetchPrayerTimes();
 }

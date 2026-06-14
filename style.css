@@ -4100,6 +4100,15 @@ body.is-mobile .mode-card-desc { font-size: 11px; }
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.65s ease;
+    /* Promote to a single stable GPU layer + isolate its paint. Without this the
+       stacked full-screen blurred fog layers flicker ("glitch in and out") on
+       browsers with weaker compositing (e.g. DuckDuckGo). */
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    will-change: opacity;
+    isolation: isolate;
 }
 .azkar-overlay.active {
     opacity: 1;
@@ -4146,6 +4155,8 @@ body.is-mobile .azkar-overlay-bg::after { display: none; }
     border-radius: 50%;
     animation: fogDrift ease-in-out infinite alternate;
     will-change: transform;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
     filter: blur(40px);
 }
 .azkar-overlay[data-mode="morning"] .azkar-fog-layer:nth-child(1) { background: radial-gradient(ellipse at 50% 60%, rgba(120,170,235,0.10) 0%, transparent 55%); animation-duration: 11s; }
