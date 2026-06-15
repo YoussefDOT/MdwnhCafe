@@ -70,11 +70,17 @@ pomo9.json                   — background tilemap/layout (don't edit)
 | `FocusAudioEngine` | line ~46 | Web Audio API ambient mixer |
 | `FocusYouTubePlayer` | line ~409 | YouTube IFrame API wrapper |
 
+### Login & auto-resume
+Discord OAuth session in localStorage. On load, `initDiscordOAuth()` validates the token and resolves the lobby. **Auto-resume**: `startGame` writes `localStorage[ACTIVE_SESSION_KEY] = userId` while in-game (cleared on explicit logout / welcome-screen logout); on load, if that flag matches the resolved user, re-enter the game directly instead of stopping on the welcome screen — `startGame` then restores the pomodoro/free-mode session from Firebase. This is what makes an unintended reload (Android discarding a backgrounded tab) seamless. Siraj ghosts never set the flag (ephemeral).
+
 ---
 
 ## Mobile / Responsive System
 
-Mobile = `window.innerWidth < 1024`. Toggle with `setMobileClass()`. `body.is-mobile` drives all mobile CSS.
+Mobile = `isMobile()`: `window.innerWidth < 1024`, **OR** a touch device whose physical `screen` short side < 760px (catches phones that report a wide layout viewport — DuckDuckGo, in-app webviews, "desktop site"). Toggle with `setMobileClass()`. `body.is-mobile` drives all mobile CSS.
+
+### Orientation changes (rotation)
+Android reports **stale** `innerWidth/innerHeight` for up to ~1s after rotating, so a naive relayout commits the old-orientation size and the UI stays broken until reload. `settleViewportLayout()` polls, re-applying layout only once the viewport aspect **agrees with `screen.orientation`** (which updates immediately) and has gone stable, then forces a final relayout. Wired to `orientationchange`, `screen.orientation` change, a `matchMedia('(orientation)')` change, and an aspect-flip detected in the debounced `resize`. `resizeCanvas()` guards on the computed **backing-store** size and clamps total pixels (3.2M reduced / 24M high) so a bad transient can't allocate a giant canvas. Viewport meta is locked (`maximum-scale=1, user-scalable=no, viewport-fit=cover`) — the game has its own canvas pinch-zoom, so browser zoom isn't needed and locking it prevents rotation zoom-stuck. Body/overlays use `100dvh` so fixed controls stay reachable as the URL bar moves.
 
 **Critical CSS rule**: Never use `!important` on `transform` for `.focus-sounds-panel`. JS drag code sets `drawer.style.transform` inline, and `!important` silently beats inline styles.
 
@@ -280,6 +286,10 @@ onDisconnect(ref(database, path)).remove();
 
 Prayer location stored in localStorage (`mdwnh_prayer_location`).
 
+**Privacy — never persist exact lat/lon.** Firebase `users/{uid}/prayerLocation` stores **city + country only** (write with `set()` to replace, not `update()`). Auto-detected/curated coords live in-memory (`loc._lat/_lon`) for the session; legacy coords are scrubbed on login.
+
+**Offline fallback (API can be blocked by VPN/ISP).** `fetchPrayerTimes()`: resolve coords (in-memory, else match `PRAYER_LOCATIONS` by city+country) → try `api.aladhan.com` with an **8s `AbortController`** → on any failure **compute locally** via `computePrayerTimesLocal()` (self-contained, method=5: Fajr 19.5°, Isha 17.5°, Asr factor 1; uses the device UTC offset so DST is correct; verified within ~1 min of the API). Retry in 20s only if there were no coords at all.
+
 ---
 
 ## Minigame Architecture
@@ -316,6 +326,34 @@ Sugar falls from top. `progress = (serverNow() - spawnTime) / fallDuration` — 
 7. `drawConnections` — social connection lines between nearby players
 
 **DPR scaling**: Canvas is `viewport * dpr` physical, `viewport` CSS. All drawing uses `ctx.scale(dpr, dpr)` so use logical pixels everywhere. `gameState.dpr` holds the ratio.
+
+---
+
+## Graphics Tiers & Mobile Performance
+
+Stored in `localStorage[SETTINGS_GRAPHICS_KEY]` as `'high' | 'low' | 'potato'`, or **absent = device-auto** (`graphicsTier()` → mobile `'low'`, desktop `'high'`). The settings toggle cycles only the three explicit tiers (عالية → منخفضة → بطاطس) — there is **no `'auto'` value/button** (it confused users: on a phone "auto" already = low, so the press looked like a no-op). Per-frame the loop caches `gameState._lowGfx = isReducedGraphics()` and `gameState._potato = isPotato()`; hot draw code reads those flags (never call the helpers per-draw — they hit localStorage).
+
+| Helper | Meaning |
+|---|---|
+| `isReducedGraphics()` | `low` **or** `potato` (mobile default). Gates the **cheap-but-huge compositing wins** that don't change the art. |
+| `isPotato()` (بطاطس) | most aggressive; **additionally** drops the atmosphere gradients. For very weak phones. |
+| `isLowGraphics()` | back-compat alias of `isReducedGraphics()`. |
+
+**Reduced (low + potato)** applies: DPR cap (`Math.min(dpr, 1.5)`, potato `1.25`) in `resizeCanvas`; **no `backdrop-filter`** on `body.is-mobile` (a blurred panel over the 60fps canvas re-rasterizes its backdrop *every frame* — the #1 mobile killer, and the "css rebuilding" users perceive); canvas shadows clamped to 0 via `installLowGfxShadowGuard(ctx)` (intercepts the `shadowBlur` setter — `ctx.shadowBlur` is a per-draw Gaussian blur used ~20×/frame); fewer wind particles.
+
+**Potato-only** (gated on `gameState._potato`): `drawSunRays`, the parallax `drawBackgroundAtmosphere`, the soft `drawFocusMask` fade, animated `drawFocusFog`, and ambient motes all fall back to cheap/no versions. So **low looks close to desktop** (gradients on) while keeping the compositing wins.
+
+**Sound:** boss-fight SFX (15 files, only used in that minigame) are deferred to `requestIdleCallback` (`ensureBossSounds()`, also force-loaded on boss-fight entry) so they don't compete during cold-start.
+
+Never animate `filter: blur()` or `transform: scale()`/`background-position` on full-screen/always-visible elements — they repaint every frame and flicker on weak GPUs. Keep such effects static.
+
+---
+
+## Player Position Sync
+
+`updatePlayerPosition(x, y)` writes `users/{uid}/{x,y,isMoving,isWorking,…}` together (atomic). Called on move/stop, every frame during the kidnap animation, at the end of `startPomodoroPhase`, on session restore, and via a **4s heartbeat** in the game loop while locked-in/in a session (the player isn't moving then, so without the heartbeat a missed/raced write would never self-correct).
+
+**Pitfall — never use `!userData.x` to detect "no position":** the centre-column laptops sit at world **x ≈ 0**, and `0` is falsy, so that check made observers treat working users as position-less and scatter them to a random spawn (they looked mid-map to everyone but themselves). Always check `x !== undefined && x !== null`. Observers only assign a spawn to non-`activeInGame` users (VC ghosts), never to in-game players.
 
 ---
 
@@ -384,6 +422,13 @@ Render is driven by the **PiP window's own `requestAnimationFrame`** (`_pipFrame
 | PiP button overlaps leave pill / looks like a stray icon | Icon-only circle placed at `top:68px` collides with `leave-wrap` (`top:54px`) | Labeled pill ("الوضع المصغر") at `top:96px`, stacked below logout + leave |
 | PiP draws but never centres / thrashes mask canvas | Calling full `render()` reuses `gameState.maskCanvas` sized to main canvas → per-frame realloc | Dedicated `renderPiPInto` context-swap; skip `drawFocusMask`, use local `_pipVignette` |
 | PiP works on Chrome but stays trapped in-tab on Safari | Safari has neither Document PiP nor `canvas.captureStream()`, so tiers 1+2 are skipped | Tier 3 `_pipOpenPopup()` (`window.open`) — a real popup window that escapes the tab (not always-on-top, but Safari's best for live content) |
+| Azkar overlay flashes/flickers (whole or partial) even while idle, on Chrome/DuckDuckGo | Continuous per-frame repaint: animated `filter: blur()` fog + `prayerGlow` scale/opacity + button `background-position` shimmer; `will-change`/`isolation` on the root made it one giant repainting layer | Make those effects **static** (no infinite animation); don't promote the overlay to its own layer; hide `#game-canvas` while azkar is open so its 60fps repaint can't contend |
+| Mobile "borderline unusable, sometimes fine" | Sustained GPU cost (varies w/ thermal & memory pressure): full-DPR canvas + `backdrop-filter` panels re-blurred every frame over the live canvas + ~20 `ctx.shadowBlur`/frame | DPR cap (`isReducedGraphics()`), remove `backdrop-filter` on `body.is-mobile`, global shadow-blur guard (`installLowGfxShadowGuard`), defer boss SFX to idle |
+| Prayer times stuck on `--:--` for some users | `api.aladhan.com` blocked by their network/VPN; fetch had no timeout/retry/offline path | Resolve coords (in-memory or curated `PRAYER_LOCATIONS`), try API with 8s `AbortController`, else **compute locally** (`computePrayerTimesLocal`, method=5); retry if no coords |
+| Reload (Android tab discard) dumps user on lobby/gender screen, "session lost" | Discord flow always stopped at the welcome screen on reload | Auto-resume: `ACTIVE_SESSION_KEY` in localStorage while in-game (cleared on explicit logout) → re-enter directly; `startGame` restores the session from Firebase |
+| Landscape→portrait wrecks the UI until reload | Android reports the **stale (old-orientation)** `innerWidth/innerHeight` for ~1s after rotating; relayout committed those and stopped | Settle loop that waits until viewport aspect agrees with `screen.orientation` (updates immediately) before committing; backing-store pixel clamp; lock viewport meta |
+| Working player shown mid-map for others, correct for self | Observer code used `!userData.x` which treats a legit `x:0` (centre-column laptop sits at world x≈0) as "no position" → scatters them to a random spawn | Explicit presence check (`x !== undefined && !== null`); never relocate `activeInGame` users; position heartbeat every 4s while in a session |
+| Can join another player's session while already in one (breaks both) | When you start your own session, the proximity guard renders the nearby panel empty but never **hides** the already-showing `sp-join-panel` (hide only ran inside `checkNearbyCoopSession`, skipped when in a session) | Explicitly hide `#sp-join-panel` + clear `nearbyCoopId/nearbySoloId` in the guard; re-check `pomodoro.active/freeMode.active/sp.phase` in `confirmJoinCoopSession`/`confirmJoinSoloSession` |
 
 ---
 

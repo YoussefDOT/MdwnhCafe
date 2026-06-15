@@ -32,24 +32,27 @@ function isTouchDevice() {
         || ('ontouchstart' in window)
         || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 }
+// 'on' | 'off' | null. null = device-auto (show on touch devices). Legacy values
+// 'always'→'on' and 'auto'→null are migrated transparently.
 function getJoystickMode() {
     const v = localStorage.getItem(SETTINGS_JOYSTICK_KEY);
-    return (v === 'always' || v === 'off') ? v : 'auto';
+    if (v === 'on' || v === 'always') return 'on';
+    if (v === 'off') return 'off';
+    return null; // auto / device default
 }
 function setJoystickMode(mode) {
-    const m = (mode === 'always' || mode === 'off') ? mode : 'auto';
-    localStorage.setItem(SETTINGS_JOYSTICK_KEY, m);
+    if (mode === 'on' || mode === 'off') localStorage.setItem(SETTINGS_JOYSTICK_KEY, mode);
+    else localStorage.removeItem(SETTINGS_JOYSTICK_KEY);
     updateJoystickVisibility();
 }
 // Should the control circle be shown right now?
-// auto   → any touch-capable device (incl. iPad landscape) or narrow viewport
-// always → forced on, even on a desktop (manual fallback)
-// off    → never shown, even on touch devices (manual override)
+// on   → always shown   off → never shown
+// null → device-auto: any touch-capable device (incl. iPad landscape) or narrow viewport
 function joystickShouldShow() {
     const mode = getJoystickMode();
+    if (mode === 'on')  return true;
     if (mode === 'off') return false;
-    if (mode === 'always') return true;
-    return isMobile() || isTouchDevice(); // auto
+    return isMobile() || isTouchDevice(); // auto default
 }
 function updateJoystickVisibility() {
     document.body.classList.toggle('joystick-enabled', joystickShouldShow());
@@ -4918,11 +4921,17 @@ function listenToPlayers() {
                     currentIdsInSnapshot.add(userId);
                     const isCurrentUser = userId === gameState.userId;
                     if (!gameState.players[userId]) {
-                        // If this is a VC ghost with no saved position, assign a random
-                        // non-overlapping spawn and persist it so they inherit it on login.
-                        let spawnX = userData.x || 0;
-                        let spawnY = userData.y || 0;
-                        if (!isCurrentUser && !userData.x) {
+                        // Explicit presence check — `!userData.x` wrongly treats a
+                        // legitimate x:0 (the centre-column laptop sits at world x≈0)
+                        // as "no position", which scattered working users to a random
+                        // spot for everyone else. Only assign a spawn when the position
+                        // is genuinely absent AND the user isn't already in-game (i.e. a
+                        // VC ghost), so in-game players are never relocated by observers.
+                        const hasPos = userData.x !== undefined && userData.x !== null
+                                    && userData.y !== undefined && userData.y !== null;
+                        let spawnX = hasPos ? userData.x : 0;
+                        let spawnY = hasPos ? userData.y : 0;
+                        if (!isCurrentUser && !hasPos && userData.activeInGame !== true) {
                             const ghostSpawn = getRandomSpawnPosition();
                             spawnX = ghostSpawn.x;
                             spawnY = ghostSpawn.y;
@@ -4970,7 +4979,12 @@ function listenToPlayers() {
                         }
 
                         if (!isCurrentUser) {
-                            setEntityTarget(player, userData.x || 0, userData.y || 0);
+                            // Only retarget when a real position is present — a transient
+                            // undefined must not snap the player to (0,0).
+                            if (userData.x !== undefined && userData.x !== null
+                             && userData.y !== undefined && userData.y !== null) {
+                                setEntityTarget(player, userData.x, userData.y);
+                            }
                             player.isMoving          = userData.isMoving || false;
                             player.isSprinting       = userData.isSprinting || false;
                             player.isLockedIn        = userData.isLockedIn || false;
@@ -5430,6 +5444,19 @@ function gameLoop(timestamp) {
     gameState._potato = isPotato();
     // On mobile, cap dtFactor more aggressively to reduce stutters from dropped frames
     if (isMobile() && gameState.dtFactor > 2) gameState.dtFactor = 2;
+
+    // Position heartbeat: while locked in / in a session the player doesn't move, so
+    // updatePlayerPosition isn't being called — re-assert the authoritative position
+    // every few seconds so observers always converge to it even if an earlier write
+    // was missed or raced.
+    if (gameState.userId && (gameState.isLockedIn || gameState.pomodoro.active || gameState.freeMode.active)) {
+        const _now = Date.now();
+        if (!gameState._lastPosHeartbeat || _now - gameState._lastPosHeartbeat > 4000) {
+            gameState._lastPosHeartbeat = _now;
+            const _p = gameState.players[gameState.userId];
+            if (_p) updatePlayerPosition(_p.x, _p.y);
+        }
+    }
 
     try {
         // Edge bokeh: hide during all three minigames (they each return early before render()).
@@ -9497,7 +9524,6 @@ function setupSettingsUI() {
     const closeBtn      = document.getElementById('settings-panel-close');
     const graphicsBtn   = document.getElementById('settings-graphics-btn');
     const graphicsLabel = document.getElementById('settings-graphics-label');
-    const graphicsAutoBtn = document.getElementById('settings-graphics-auto-btn');
     const namesBtn      = document.getElementById('settings-names-btn');
     const namesLabel    = document.getElementById('settings-names-label');
     const joystickBtn   = document.getElementById('settings-joystick-btn');
@@ -9506,23 +9532,20 @@ function setupSettingsUI() {
 
     function _reflectJoystick() {
         if (!joystickBtn) return;
-        const mode = getJoystickMode();
-        joystickBtn.dataset.value = mode;
-        joystickBtn.classList.toggle('settings-toggle-on', mode === 'always');
-        joystickBtn.classList.toggle('settings-toggle-low', mode === 'off');
-        if (joystickLabel) joystickLabel.textContent = mode === 'always' ? 'دائماً' : (mode === 'off' ? 'مغلقة' : 'تلقائي');
+        const shown = joystickShouldShow();   // resolves auto for display
+        joystickBtn.dataset.value = shown ? 'on' : 'off';
+        joystickBtn.classList.toggle('settings-toggle-on', shown);
+        joystickBtn.classList.toggle('settings-toggle-low', !shown);
+        if (joystickLabel) joystickLabel.textContent = shown ? 'ظاهرة' : 'مغلقة';
     }
 
     function _reflectGraphics() {
-        const stored = getGraphicsQuality();   // null when on device-auto
-        const tier = graphicsTier();           // always concrete
+        const tier = graphicsTier();           // always concrete (device default until chosen)
         graphicsBtn.dataset.value = tier;
         graphicsBtn.classList.toggle('settings-toggle-on',  tier === 'high');
         graphicsBtn.classList.toggle('settings-toggle-low', tier === 'potato');
         const labels = { high: 'عالية', low: 'منخفضة', potato: 'بطاطس' };
         graphicsLabel.textContent = labels[tier];
-        // The auto button is "active" while no explicit tier is chosen (device-auto).
-        if (graphicsAutoBtn) graphicsAutoBtn.classList.toggle('active', stored === null);
         _applyGraphicsSetting();
     }
 
@@ -9545,23 +9568,14 @@ function setupSettingsUI() {
         resizeCanvas();
     }
 
-    // Main button cycles only the explicit tiers (no confusing no-op 'auto' state):
-    // عالية → منخفضة → بطاطس. Operates on the resolved tier so something always changes.
+    // Cycles the explicit tiers: عالية → منخفضة → بطاطس. Operates on the resolved tier
+    // (device default until first chosen) so a press always visibly changes something.
     graphicsBtn.addEventListener('click', () => {
         const cycle = { high: 'low', low: 'potato', potato: 'high' };
         const next = cycle[graphicsTier()] || 'low';
         localStorage.setItem(SETTINGS_GRAPHICS_KEY, next);
         _reflectGraphics();
     });
-
-    // Separate auto button: clears the explicit choice so the tier follows the device
-    // (mobile → low, desktop → high). The main button then shows the resolved tier.
-    if (graphicsAutoBtn) {
-        graphicsAutoBtn.addEventListener('click', () => {
-            localStorage.removeItem(SETTINGS_GRAPHICS_KEY);
-            _reflectGraphics();
-        });
-    }
 
     namesBtn.addEventListener('click', () => {
         const next = getHideNames() ? '0' : '1';
@@ -9571,8 +9585,8 @@ function setupSettingsUI() {
 
     if (joystickBtn) {
         joystickBtn.addEventListener('click', () => {
-            const cycle = { auto: 'always', always: 'off', off: 'auto' };
-            setJoystickMode(cycle[getJoystickMode()] || 'auto');
+            // Binary toggle: flip the resolved visible state.
+            setJoystickMode(joystickShouldShow() ? 'off' : 'on');
             _reflectJoystick();
         });
     }
@@ -9659,8 +9673,16 @@ function updateSharedPomoProximity() {
     const hostIsGathering = sp.phase === 'gathering' && sp.isHost;
     if ((!hostIsGathering && sp.phase !== 'idle') || gameState.pomodoro.active || gameState.freeMode.active) {
         renderSpNearbyPanel([]);
-        // Still detect nearby coop sessions even when not idle for join flow
-        if (!gameState.pomodoro.active && !gameState.freeMode.active) checkNearbyCoopSession();
+        if (!gameState.pomodoro.active && !gameState.freeMode.active) {
+            // Still detect nearby coop sessions even when not idle for join flow
+            checkNearbyCoopSession();
+        } else {
+            // In my OWN session — a join panel must never linger/stay clickable.
+            // (checkNearbyCoopSession is skipped here, so hide it explicitly.)
+            sp.nearbyCoopId = '';
+            sp.nearbySoloId = '';
+            document.getElementById('sp-join-panel')?.classList.add('hidden');
+        }
         return;
     }
     const local = gameState.players[gameState.userId];
@@ -9852,6 +9874,11 @@ function confirmJoinCoopSession() {
     const sp = gameState.sharedPomo;
     const data = sp.joinDetails;
     if (!data) return;
+    // Never join while already in a session (the panel may have lingered).
+    if (gameState.pomodoro.active || gameState.freeMode.active || sp.phase !== 'idle') {
+        document.getElementById('sp-join-panel')?.classList.add('hidden');
+        return;
+    }
 
     document.getElementById('sp-join-panel')?.classList.add('hidden');
 
@@ -9987,6 +10014,11 @@ function confirmJoinSoloSession() {
     const sp = gameState.sharedPomo;
     const data = sp.joinDetails;
     if (!data?.isSolo) return;
+    // Never join while already in a session (the panel may have lingered).
+    if (gameState.pomodoro.active || gameState.freeMode.active || sp.phase !== 'idle') {
+        document.getElementById('sp-join-panel')?.classList.add('hidden');
+        return;
+    }
 
     document.getElementById('sp-join-panel')?.classList.add('hidden');
     const sub = document.querySelector('.sp-join-sub');
