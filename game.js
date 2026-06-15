@@ -1406,6 +1406,9 @@ const gameState = {
     activeLaptop: null,
     isLockedIn: false,
     focusAlpha: 0,
+    // Animated "انقر للبدء" prompt — fades out from the old laptop then pops/fades
+    // in for the next one as you walk past a row.
+    promptState: { shownKey: null, shownText: null, shownWeak: false, shownX: 0, shownY: 0, alpha: 0, pop: 0 },
     lastTime: 0,
     dtFactor: 1.0,
     dustParticles: [],
@@ -1694,6 +1697,12 @@ const BG_HEIGHT = BASE_BG_HEIGHT * BG_SCALE;
 const TABLE_WIDTH = BASE_TABLE_WIDTH * TABLE_SCALE;
 const TABLE_HEIGHT = BASE_TABLE_HEIGHT * TABLE_SCALE;
 const ROOM_COUNT = 2;
+
+// Laptop focus-mask proximity radii. Full dark mask anywhere within FULL_R of a
+// laptop, easing out to nothing by FADE_R. FULL_R is wider than the laptop
+// spacing so the mask reads as one continuous darkening across the grid.
+const LAPTOP_MASK_FULL_R = 150;
+const LAPTOP_MASK_FADE_R = 235;
 const WORLD_HEIGHT = BG_HEIGHT * ROOM_COUNT;
 const ROOM_SEAM_Y = BG_HEIGHT / 2;
 const BREAK_ROOM_CENTER_Y = BG_HEIGHT;
@@ -5141,7 +5150,9 @@ function updateInteractions() {
 
     gameState.activeLaptop = null;
     gameState.activeRaceButton = false;
-    let closestDist = 120;
+    // Detection radius is generous so the dark focus mask stays continuous while
+    // walking through / past the whole laptop grid (laptops sit ~45-90px apart).
+    let closestDist = LAPTOP_MASK_FADE_R;
     let minDist = Infinity;
 
     gameState.laptops.forEach(laptop => {
@@ -5238,8 +5249,12 @@ function updateInteractions() {
         // Always full darkening when locked in — don't rely on proximity
         targetAlpha = baseAlpha;
     } else if (gameState.activeLaptop) {
-        // Proximity fade when approaching a laptop
-        targetAlpha = Math.min(baseAlpha, Math.max(0, (1 - minDist / 120) * 1.5));
+        // Proximity fade: full (plateaued) when within LAPTOP_MASK_FULL_R of ANY
+        // laptop, easing to 0 only by LAPTOP_MASK_FADE_R. The wide full-alpha
+        // plateau keeps the mask continuous across the whole laptop grid so it no
+        // longer flickers out in the gaps between adjacent laptops.
+        const fadeT = (LAPTOP_MASK_FADE_R - minDist) / (LAPTOP_MASK_FADE_R - LAPTOP_MASK_FULL_R);
+        targetAlpha = baseAlpha * Math.max(0, Math.min(1, fadeT));
     }
 
     // Disable the dark laptop focus mask if we are currently on a break!
@@ -7490,57 +7505,74 @@ function drawFocusMask(W, H) {
     ctx.scale(gameState.zoom, gameState.zoom);
     ctx.translate(gameState.camera.x, gameState.camera.y);
     drawPlayers(true);
-    if (gameState.activeLaptop && !gameState.isLockedIn && !gameState.anim.active) {
-        drawPrompt(gameState.activeLaptop);
-    }
+    drawPrompt((gameState.isLockedIn || gameState.anim.active) ? null : gameState.activeLaptop);
     ctx.restore();
 }
 
+function promptOwnerName(laptop) {
+    const owner = gameState.players[laptop.claimedBy];
+    return owner ? owner.username : "شخص آخر";
+}
+
+// Animated prompt. Called every frame with the current activeLaptop (or null).
+// When the target laptop/text changes it fades the old prompt out, then pops the
+// new one in — so walking past a row reads as a smooth hand-off between laptops.
 function drawPrompt(laptop) {
     const ctx = gameState.ctx;
+    const ps = gameState.promptState;
 
-    // If already in a Pomodoro or free mode, don't show prompt to start another one
-    if (gameState.pomodoro.active || gameState.freeMode.active) {
-        if (laptop.claimedBy && laptop.claimedBy !== gameState.userId) {
-            let ownerName = "شخص آخر";
-            const owner = gameState.players[laptop.claimedBy];
-            if (owner) {
-                ownerName = owner.username;
+    // Work out the prompt the given laptop wants to show (null = nothing).
+    let text = null, weak = false;
+    if (laptop) {
+        if (gameState.pomodoro.active || gameState.freeMode.active) {
+            if (laptop.claimedBy && laptop.claimedBy !== gameState.userId) {
+                text = `هذا الجهاز تابع لـ ${promptOwnerName(laptop)}`; weak = true;
             }
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-            ctx.font = 'bold 14px Rubik';
-            ctx.textAlign = 'center';
-            ctx.shadowBlur = 4;
-            ctx.shadowColor = 'black';
-            ctx.fillText(`هذا الجهاز تابع لـ ${ownerName}`, laptop.x, laptop.y - 45);
-            ctx.shadowBlur = 0;
+        } else if (laptop.claimedBy) {
+            text = `هذا الجهاز تابع لـ ${promptOwnerName(laptop)}`; weak = true;
+        } else {
+            text = 'انقر للبدء';
         }
-        return;
     }
 
-    if (laptop.claimedBy) {
-        let ownerName = "شخص آخر";
-        const owner = gameState.players[laptop.claimedBy];
-        if (owner) {
-            ownerName = owner.username;
+    const key = (laptop && text) ? `${laptop.id}|${text}` : null;
+    const lerp = 1 - Math.pow(1 - 0.22, gameState.dtFactor);
+
+    if (key !== ps.shownKey) {
+        // Fade the current prompt out; once it's faint enough, adopt the new one.
+        ps.alpha += (0 - ps.alpha) * lerp;
+        if (ps.alpha < 0.06 || ps.shownKey === null) {
+            ps.shownKey = key;
+            ps.shownText = text;
+            ps.shownWeak = weak;
+            if (laptop) { ps.shownX = laptop.x; ps.shownY = laptop.y; }
+            ps.alpha = 0;
+            ps.pop = 0;
         }
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.font = 'bold 14px Rubik';
-        ctx.textAlign = 'center';
-        ctx.shadowBlur = 4;
-        ctx.shadowColor = 'black';
-        ctx.fillText(`هذا الجهاز تابع لـ ${ownerName}`, laptop.x, laptop.y - 45);
-        ctx.shadowBlur = 0;
-        return;
+    } else if (ps.shownKey) {
+        if (laptop) { ps.shownX = laptop.x; ps.shownY = laptop.y; }
+        ps.alpha += (1 - ps.alpha) * lerp;
+        ps.pop  += (1 - ps.pop)  * lerp;
     }
 
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 16px Rubik';
+    if (!ps.shownKey || ps.alpha < 0.02) return;
+
+    const a = ps.alpha;
+    const bob = Math.sin(Date.now() * 0.004) * 2.5;        // gentle float
+    const pop = 0.82 + 0.18 * easeOutBack(Math.min(1, ps.pop)); // playful pop-in
+    const yOffset = -45 - (1 - a) * 10 + bob;              // rises as it appears
+
+    ctx.save();
+    ctx.translate(ps.shownX, ps.shownY + yOffset);
+    ctx.scale(pop, pop);
     ctx.textAlign = 'center';
     ctx.shadowBlur = 4;
-    ctx.shadowColor = 'black';
-    ctx.fillText('انقر للبدء', laptop.x, laptop.y - 45);
+    ctx.shadowColor = `rgba(0, 0, 0, ${0.65 * a})`;
+    ctx.fillStyle = `rgba(255, 255, 255, ${(ps.shownWeak ? 0.8 : 1) * a})`;
+    ctx.font = ps.shownWeak ? 'bold 14px Rubik' : 'bold 16px Rubik';
+    ctx.fillText(ps.shownText, 0, 0);
     ctx.shadowBlur = 0;
+    ctx.restore();
 }
 
 function enforceAudioFailsafe() {
