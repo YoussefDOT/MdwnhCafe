@@ -1409,6 +1409,11 @@ const gameState = {
     // Animated "انقر للبدء" prompt — fades out from the old laptop then pops/fades
     // in for the next one as you walk past a row.
     promptState: { shownKey: null, shownText: null, shownWeak: false, shownX: 0, shownY: 0, alpha: 0, pop: 0 },
+    // Animated laptop cutout in the focus mask — fades out at the old laptop and
+    // in at the new one instead of snapping the bright circle across.
+    maskLaptopState: { id: null, x: 0, y: 0, alpha: 0 },
+    // Animated break-door prompt — same playful fade/pop as the laptop prompt.
+    breakDoorPrompt: { shownText: null, alpha: 0, pop: 0 },
     lastTime: 0,
     dtFactor: 1.0,
     dustParticles: [],
@@ -5618,6 +5623,7 @@ function render() {
 
     drawRoomShadows();
     drawBreakDoor();
+    drawBreakDoorPrompt();
     drawRaceHint();
     drawCoffeeHint();
     drawLaptopBossHint();
@@ -5698,16 +5704,44 @@ function drawBreakDoor() {
         }
     }
 
+    ctx.restore();
+}
+
+// Animated break-door label (called once per frame, after players, so it sits on
+// top). Same playful fade-out / pop-in as the laptop prompt.
+function drawBreakDoorPrompt() {
+    const ctx = gameState.ctx;
+    const y = ROOM_SEAM_Y;
     const player = gameState.players[gameState.userId];
-    if (player && Math.hypot(player.x, player.y - y) < 190) {
-        ctx.font = 'bold 15px Rubik';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'white';
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = 'black';
-        ctx.fillText(open ? 'باب الاستراحة مفتوح' : 'باب الاستراحة مغلق', 0, y - 72);
-        ctx.shadowBlur = 0;
+    const near = player && Math.hypot(player.x, player.y - y) < 190;
+    const wantText = isBreakActive() ? 'باب الاستراحة مفتوح' : 'باب الاستراحة مغلق';
+
+    const bp = gameState.breakDoorPrompt;
+    const bLerp = 1 - Math.pow(1 - 0.22, gameState.dtFactor);
+    if (!near || wantText !== bp.shownText) {
+        // Fade out the current label; adopt the new one once it's faint enough.
+        bp.alpha += (0 - bp.alpha) * bLerp;
+        if (bp.alpha < 0.06 && near) { bp.shownText = wantText; bp.pop = 0; }
+    } else {
+        bp.shownText = wantText;
+        bp.alpha += (1 - bp.alpha) * bLerp;
+        bp.pop   += (1 - bp.pop)   * bLerp;
     }
+
+    if (!bp.shownText || bp.alpha < 0.02) return;
+    const a = bp.alpha;
+    const bob = Math.sin(Date.now() * 0.004) * 2.5;
+    const pop = 0.82 + 0.18 * easeOutBack(Math.min(1, bp.pop));
+    ctx.save();
+    ctx.translate(0, (y - 72) - (1 - a) * 10 + bob);
+    ctx.scale(pop, pop);
+    ctx.font = 'bold 15px Rubik';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = `rgba(0, 0, 0, ${a})`;
+    ctx.fillText(bp.shownText, 0, 0);
+    ctx.shadowBlur = 0;
     ctx.restore();
 }
 
@@ -7462,7 +7496,24 @@ function drawFocusMask(W, H) {
     mCtx.fillRect(0, 0, mCanvas.width, mCanvas.height);
 
     const player = gameState.players[gameState.userId];
-    const laptop = gameState.isLockedIn ? null : (gameState.activeLaptop || gameState.lastActiveLaptop);
+
+    // Quick fade-out/fade-in of the laptop cutout when the target laptop changes,
+    // so the bright circle doesn't snap from one laptop to the next.
+    const mls = gameState.maskLaptopState;
+    const tgt = gameState.isLockedIn ? null : gameState.activeLaptop;
+    const tgtId = tgt ? tgt.id : null;
+    const mLerp = 1 - Math.pow(1 - 0.3, gameState.dtFactor);
+    if (tgtId !== mls.id) {
+        mls.alpha += (0 - mls.alpha) * mLerp;
+        if (mls.alpha < 0.06 || mls.id === null) {
+            mls.id = tgtId;
+            if (tgt) { mls.x = tgt.x; mls.y = tgt.y; }
+            mls.alpha = 0;
+        }
+    } else if (mls.id !== null) {
+        if (tgt) { mls.x = tgt.x; mls.y = tgt.y; }
+        mls.alpha += (1 - mls.alpha) * mLerp;
+    }
 
     if (player) {
         mCtx.globalCompositeOperation = 'destination-out';
@@ -7487,15 +7538,16 @@ function drawFocusMask(W, H) {
         mCtx.arc(pScreenX, pScreenY, pRadius, 0, Math.PI * 2);
         mCtx.fill();
 
-        if (laptop && !gameState.isLockedIn) {
-            const lScreenX = centerX + (laptop.x + gameState.camera.x) * zoom * dpr;
-            const lScreenY = centerY + (laptop.y + gameState.camera.y) * zoom * dpr;
+        if (mls.id !== null && mls.alpha > 0.02 && !gameState.isLockedIn) {
+            const la = mls.alpha;
+            const lScreenX = centerX + (mls.x + gameState.camera.x) * zoom * dpr;
+            const lScreenY = centerY + (mls.y + gameState.camera.y) * zoom * dpr;
             const lRadius = 100 * zoom * dpr;
             if (gameState._potato) {
-                mCtx.fillStyle = 'rgba(255, 255, 255, 1)';
+                mCtx.fillStyle = `rgba(255, 255, 255, ${la})`;
             } else {
                 const lGrad = mCtx.createRadialGradient(lScreenX, lScreenY, lRadius * 0.4, lScreenX, lScreenY, lRadius);
-                lGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                lGrad.addColorStop(0, `rgba(255, 255, 255, ${la})`);
                 lGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
                 mCtx.fillStyle = lGrad;
             }
