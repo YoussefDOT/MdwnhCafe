@@ -18,6 +18,8 @@ python3 -m http.server 8080
 
 **Never push to git unless the user explicitly asks.** Always test on localhost first. **Always push directly to `main`** — never push to a separate branch (`git push origin HEAD:main`).
 
+**Build number**: A `#build-number` div sits below the `#siraj-test-link` button on the login screen showing `Build N · Updated H:MM AM/PM`. The `.git/hooks/pre-commit` hook auto-increments the number and timestamps it on every commit — no manual edits needed. If the hook ever fails to find the pattern, it logs a warning and exits cleanly.
+
 ---
 
 ## What This App Is

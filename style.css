@@ -3747,6 +3747,23 @@ body.is-mobile .lobby-bg {
 .siraj-test-link:hover { color: rgba(255,255,255,0.45); }
 body.game-ready .siraj-test-link { display: none; }
 
+.build-number {
+    position: fixed;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 500;
+    color: rgba(255,255,255,0.10);
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+}
+body.game-ready .build-number { display: none; }
+
 /* siraj password modal input */
 .siraj-pw-input {
     width: 100%;
