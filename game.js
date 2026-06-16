@@ -8659,9 +8659,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #07070a;
 #pip-close:hover { background: rgba(225,53,46,0.55); border-color: rgba(225,53,46,0.4); color: #fff; transform: scale(1.04); }
 #pip-close svg { width: 15px; height: 15px; }
 
-/* ── Compact control bar (focus sounds + YouTube) ── */
+/* ── Compact control bar (focus sounds + YouTube) ──
+   Stacked: YouTube row on TOP, sounds row on the BOTTOM. Stacking (instead of
+   side-by-side) gives the sounds row the full width of the window, so all the
+   sound chips stay visible even when the PiP window is made small. */
 #pip-controls { position: absolute; bottom: 12px; right: 12px; z-index: 5;
-  display: flex; align-items: center; gap: 8px; direction: ltr;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px; direction: ltr;
   max-width: calc(100% - 130px); }
 #pip-sounds { display: flex; align-items: center; gap: 4px; padding: 5px 6px;
   border-radius: 50px; background: rgba(18,18,18,0.62);
@@ -8754,6 +8757,8 @@ function _pipBuildControlsHTML() {
   </div>
   <div id="pip-snd-pop" class="pip-pop">
     <div class="pip-pop-title">مستويات أصوات التركيز</div>
+    <div class="pip-slider-row snd-on" id="pip-overall-row"><div class="lbl"><span class="nm on">جميع الأصوات</span></div>
+      <input type="range" min="0" max="1" step="0.05" id="pip-overall-vol"></div>
     ${sliders}
   </div>
   <div id="pip-yt-pop" class="pip-pop">
@@ -9046,6 +9051,8 @@ function _pipWireControls(doc) {
     doc.getElementById('pip-snd-more')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const e = eng();
+        const ov = doc.getElementById('pip-overall-vol');
+        if (e && ov) ov.value = e.overallVolume ?? 0.5;
         if (e) doc.querySelectorAll('input[data-snd-vol]').forEach(sl => {
             const key = sl.dataset.sndVol;
             sl.value = e.sounds[key]?.volume ?? 0.5;
@@ -9057,6 +9064,11 @@ function _pipWireControls(doc) {
         });
         const open = !sndPop.classList.contains('show');
         closePops(sndPop); sndPop.classList.toggle('show', open);
+    });
+    // Overall volume (master) — affects all focus sounds together.
+    doc.getElementById('pip-overall-vol')?.addEventListener('input', () => {
+        const e = eng(); const ov = doc.getElementById('pip-overall-vol');
+        if (e && ov) e.updateOverallVolume(ov.value);
     });
     doc.querySelectorAll('input[data-snd-vol]').forEach(sl => {
         sl.addEventListener('input', () => {
@@ -9254,7 +9266,10 @@ async function openPiPMode() {
     // the next best thing: a separate OS window that escapes the tab and drags
     // freely across displays (just not always-on-top). Renders via the same path.
     // Skipped on mobile — there window.open is just a new tab, not a window.
-    if (!isMobile()) {
+    // Skipped on mobile AND on iPad/iPhone: on iOS/iPadOS every browser is WebKit
+    // and window.open() makes a *tab*, never an escapable window — so the popup
+    // would just be stuck inside the browser (worse than the in-page panel below).
+    if (!isMobile() && !_pipIsAppleTouch()) {
         try {
             if (_pipOpenPopup()) { pip._opening = false; return; }
         } catch (e) {
@@ -9301,6 +9316,15 @@ function _pipOpenPopup() {
     try { pip.rafId = win.requestAnimationFrame(_pipFrame); } catch (e) {}
     // popupPollId backstop is set up inside _pipSetupWindow (above)
     return true;
+}
+
+// True on iPhone/iPod and iPadOS (which reports as "MacIntel" but has touch).
+// Used to skip the popup-window PiP tier — window.open is only ever a tab on iOS.
+function _pipIsAppleTouch() {
+    const ua = navigator.userAgent || '';
+    if (/iP(hone|od|ad)/.test(ua)) return true;
+    // iPadOS 13+ masquerades as macOS Safari; real Macs have no touch.
+    return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1;
 }
 
 function _pipVideoSupported() {
