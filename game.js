@@ -2428,6 +2428,156 @@ function syncLaptopsFromPomodoro(data) {
     });
 }
 
+// ── Session disconnect / reclaim (solo pomodoro & free mode) ─────────────────
+// On ANY disconnect we (a) free the laptop immediately so others never see a
+// ghost (claimed-but-empty) laptop, and (b) stash the session under
+// users/{uid}/lastPomoSession so the user can reclaim it within 4h on next login
+// (their old laptop if it's free, otherwise a random free one). Shared pomo has
+// its own host-promotion path and is intentionally excluded here.
+const RECLAIM_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+function _sessionIsSolo() {
+    // Shared pomo: guests share the host's laptop; the host uses live-doc promotion.
+    return gameState.sharedPomo.phase !== 'active';
+}
+
+function _activeSessionLaptopId() {
+    if (gameState.freeMode.active) return gameState.freeMode.laptopId;
+    if (gameState.pomodoro.active) return gameState.pomodoro.laptopId;
+    return null;
+}
+
+function _pomoDocFromState() {
+    const p = gameState.pomodoro;
+    return {
+        claimedBy:    gameState.userId,
+        phase:        p.phase,
+        endTime:      p.endTime || 0,
+        workDuration: p.workDuration,
+        breakDuration: p.breakDuration || 5,
+        sessionsLeft:  p.sessionsLeft,
+        totalSessions: p.totalSessions || p.sessionsLeft || 1,
+        createdAt:     p.createdAt || Date.now(),
+    };
+}
+
+function _buildReclaimSnapshot() {
+    const lapId = _activeSessionLaptopId();
+    if (lapId === null || lapId === undefined) return null;
+    if (gameState.freeMode.active) {
+        const fm = gameState.freeMode;
+        let totalMs = fm.totalWorkMs || 0;
+        if (fm.phase === 'work' && fm.workStartTime > 0) totalMs += Date.now() - fm.workStartTime;
+        return {
+            mode: 'free', laptopId: lapId, claimedBy: gameState.userId,
+            totalWorkMs: totalMs, createdAt: fm._createdAt || Date.now(),
+        };
+    }
+    const p = gameState.pomodoro;
+    return {
+        mode: 'pomo', laptopId: lapId, claimedBy: gameState.userId,
+        phase: p.phase, endTime: p.endTime || 0,
+        workDuration: p.workDuration, breakDuration: p.breakDuration || 5,
+        sessionsLeft: p.sessionsLeft, totalSessions: p.totalSessions || p.sessionsLeft || 1,
+        createdAt: p.createdAt || Date.now(),
+    };
+}
+
+// Keep a fresh (NOT-yet-abandoned) snapshot in Firebase while the session is live
+// so a sudden disconnect only needs to stamp `abandonedAt` server-side — no
+// read-race when the reloaded page tries to reclaim.
+function persistReclaimSnapshot() {
+    if (gameState.isSirajGhost || !_sessionIsSolo()) return;
+    const snap = _buildReclaimSnapshot();
+    if (!snap) return;
+    snap.abandonedAt = null; // live, not abandoned
+    update(ref(database), { [`users/${gameState.userId}/lastPomoSession`]: snap });
+}
+
+// Arm the disconnect handlers: free the laptop + stamp `abandonedAt` on the stash.
+function armSessionDisconnect() {
+    if (gameState.isSirajGhost || !_sessionIsSolo()) return;
+    const lapId = _activeSessionLaptopId();
+    if (lapId === null || lapId === undefined) return;
+    // If we relocated, cancel the previous laptop's remove so a later disconnect
+    // doesn't wipe a doc that now belongs to someone else.
+    const prev = gameState._armedDisconnectLaptopId;
+    if (prev !== null && prev !== undefined && prev !== lapId) {
+        onDisconnect(ref(database, lobbyPath(`pomodoro/${prev}`))).cancel();
+    }
+    gameState._armedDisconnectLaptopId = lapId;
+    onDisconnect(ref(database, lobbyPath(`pomodoro/${lapId}`))).remove();
+    onDisconnect(ref(database, `users/${gameState.userId}/lastPomoSession/abandonedAt`)).set({ '.sv': 'timestamp' });
+}
+
+// Persist + arm together. Call on every session state change (start, phase flip,
+// periodic free-mode save) so the stash and disconnect handlers stay current.
+function trackSessionForReclaim() {
+    persistReclaimSnapshot();
+    armSessionDisconnect();
+}
+
+// Cancel the disconnect handlers on a clean exit, optionally wiping the stash.
+function cancelSessionDisconnect(clearStash) {
+    if (gameState.isSirajGhost) return;
+    const lapId = gameState._armedDisconnectLaptopId;
+    if (lapId !== null && lapId !== undefined) {
+        onDisconnect(ref(database, lobbyPath(`pomodoro/${lapId}`))).cancel();
+    }
+    onDisconnect(ref(database, `users/${gameState.userId}/lastPomoSession/abandonedAt`)).cancel();
+    gameState._armedDisconnectLaptopId = null;
+    if (clearStash) update(ref(database), { [`users/${gameState.userId}/lastPomoSession`]: null });
+}
+
+// Move the live solo session onto a different (free) laptop and sync position so
+// every client sees the user seated correctly. Used when the old laptop was
+// claimed by someone else during a network dropout.
+function _relocateActiveSession(laptop) {
+    const lapId = laptop.id;
+    if (gameState.freeMode.active) {
+        gameState.freeMode.laptopId = lapId;
+    } else {
+        gameState.pomodoro.laptopId = lapId;
+    }
+    laptop.claimedBy = gameState.userId;
+    if (gameState.freeMode.active) {
+        saveFreeModStateToFirebase();   // writes doc + persists snapshot + arms
+    } else {
+        update(ref(database), { [lobbyPath(`pomodoro/${lapId}`)]: _pomoDocFromState() });
+        trackSessionForReclaim();       // fresh live snapshot (abandonedAt:null) + arm
+    }
+    const p = gameState.players[gameState.userId];
+    if (p) { teleportEntity(p, laptop.sitX, laptop.sitY); updatePlayerPosition(laptop.sitX, laptop.sitY); }
+}
+
+// After the Firebase socket silently reconnects, undo any session-freeing
+// onDisconnect that fired during the dropout: re-claim our laptop (or relocate
+// if it was taken) and clear the just-stamped abandonment so we don't look like
+// a ghost and the session isn't double-restored on the next reload.
+function reassertActiveSessionAfterReconnect() {
+    if (gameState.isSirajGhost || !_sessionIsSolo()) return;
+    if (!gameState.pomodoro.active && !gameState.freeMode.active) return;
+    const lapId = _activeSessionLaptopId();
+    if (lapId === null || lapId === undefined) return;
+
+    const laptop = gameState.laptops.find(l => l.id === lapId);
+    if (laptop && laptop.claimedBy && laptop.claimedBy !== gameState.userId) {
+        // Someone grabbed our laptop while we were dropped — relocate to a free one.
+        const free = gameState.laptops.find(l => !l.claimedBy);
+        if (free) _relocateActiveSession(free);
+        return;
+    }
+
+    if (gameState.freeMode.active) {
+        saveFreeModStateToFirebase();   // writes doc + persists snapshot + arms
+    } else {
+        update(ref(database), { [lobbyPath(`pomodoro/${lapId}`)]: _pomoDocFromState() });
+        trackSessionForReclaim();       // fresh live snapshot (abandonedAt:null) + arm
+    }
+    const p = gameState.players[gameState.userId];
+    if (p) updatePlayerPosition(p.x, p.y);
+}
+
 function cleanupStaleRaceSession(session, sessionKey) {
     if (!session || !sessionKey) return false;
 
@@ -2956,21 +3106,41 @@ function startGame(userData) {
 
     // Set active presence in game and set up disconnect presence cleanup
     const activeRef = ref(database, `users/${gameState.userId}/activeInGame`);
-    set(activeRef, true);
     if (gameState.isSirajGhost) {
         // Siraj ghost: delete entire user entry on disconnect
+        set(activeRef, true);
         onDisconnect(ref(database, `users/${gameState.userId}`)).remove();
     } else {
-        onDisconnect(activeRef).set(false);
-
         // Single-session enforcement: each login writes a unique token. If another
         // tab/device logs in with the same account, it overwrites the token. The
         // original tab detects the mismatch and shows a "logged in elsewhere" overlay.
         const _tok = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
         gameState._sessionToken = _tok;
         const sessionRef = ref(database, `users/${gameState.userId}/activeSession`);
-        set(sessionRef, _tok);
-        onDisconnect(sessionRef).set(null);
+
+        // CRITICAL presence fix (the perennial "ghost laptop / working user
+        // invisible to others" bug): a flaky mobile connection drops the Firebase
+        // socket, which fires the `onDisconnect` ops server-side (activeInGame=false,
+        // laptop freed). The socket then silently reconnects — but the original code
+        // only set presence ONCE at login, so activeInGame stayed false forever and
+        // the still-working user rendered as a claimed-but-empty ghost laptop to
+        // everyone else. Re-assert presence (and RE-ARM the disconnect handlers,
+        // which fire only once) on EVERY (re)connection via `.info/connected`.
+        const connectedRef = ref(database, '.info/connected');
+        onValue(connectedRef, (snap) => {
+            if (snap.val() !== true) return;
+            // If another device took over this account, don't fight back on reconnect.
+            if (gameState._dupSessionDetected) return;
+            // (Re)arm disconnect cleanup first, then assert the live value.
+            onDisconnect(activeRef).set(false);
+            set(activeRef, true);
+            onDisconnect(sessionRef).set(null);
+            set(sessionRef, gameState._sessionToken);
+            // Undo any session-freeing onDisconnect that fired during the dropout so
+            // the laptop comes back to us instead of lingering as a ghost / staying free.
+            reassertActiveSessionAfterReconnect();
+        });
+
         onValue(sessionRef, snap => {
             const live = snap.val();
             if (live && live !== gameState._sessionToken) {
@@ -2979,6 +3149,22 @@ function startGame(userData) {
                 gameState._dupSessionDetected = true;
             }
         });
+
+        // On PC sleep/wake or tab refocus, re-assert presence + re-broadcast our
+        // position/task immediately (don't wait for the 10s heartbeat) so observers
+        // who saw us drop refresh us instantly instead of leaving us as a faded ghost.
+        const _resyncPresence = () => {
+            if (gameState._dupSessionDetected) return;
+            update(ref(database), {
+                [`users/${gameState.userId}/activeInGame`]: true,
+                [`users/${gameState.userId}/activeSession`]: gameState._sessionToken,
+            });
+            const _p = gameState.players[gameState.userId];
+            if (_p) updatePlayerPosition(_p.x, _p.y);
+        };
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) _resyncPresence(); });
+        window.addEventListener('focus', _resyncPresence);
+        window.addEventListener('online', _resyncPresence);
     }
 
     document.getElementById('login-screen').classList.remove('active');
@@ -3050,14 +3236,12 @@ function startGame(userData) {
                     fm.breakEndTime  = 0;
                     fm.breakPromptShown = false;
                     fm.needsResume   = true;
-                    // Restore laptop doc to active state and re-register onDisconnect
+                    // Restore laptop doc to active state. The unified disconnect
+                    // handlers (free laptop + stash) are armed later via
+                    // trackSessionForReclaim() once the session state is settled.
                     update(ref(database), {
                         [lobbyPath(`pomodoro/${lapId}/phase`)]: 'free-work',
                         [lobbyPath(`pomodoro/${lapId}/savedAt`)]: 0,
-                    });
-                    onDisconnect(ref(database, lobbyPath(`pomodoro/${lapId}`))).update({
-                        phase: 'wait',
-                        savedAt: { '.sv': 'timestamp' },
                     });
                 }
                 break;
@@ -3096,14 +3280,51 @@ function startGame(userData) {
                 gameState.focusYTPlayer.loadFromProfile(data.focusPlayer);
             }
 
-            // Reclaim an abandoned session (saved by cleanupAbandonedPomoSessions on a previous login)
-            if (activeLaptopId === null && data?.lastPomoSession) {
+            // Reclaim a session our onDisconnect stashed when we dropped the socket
+            // or closed the tab mid-session (valid for 4h). `abandonedAt` is only
+            // present once a disconnect actually happened — a live snapshot has it
+            // null and is ignored here. Prefer the original laptop; if it's taken,
+            // fall back to any free laptop (position syncs so all clients see us
+            // seated correctly on the new one).
+            if (activeLaptopId === null && data?.lastPomoSession && data.lastPomoSession.abandonedAt) {
                 const ls = data.lastPomoSession;
-                const FOUR_HOURS = 4 * 60 * 60 * 1000;
                 const now = Date.now();
-                const stillValid = ls.abandonedAt && (now - ls.abandonedAt < FOUR_HOURS) && ls.sessionsLeft > 0;
-                const freeLaptop = stillValid ? gameState.laptops.find(l => !l.claimedBy) : null;
-                if (freeLaptop) {
+                const isFree = ls.mode === 'free';
+                const withinWindow = (now - ls.abandonedAt) < RECLAIM_WINDOW_MS;
+                const hasProgress = isFree ? true : (ls.sessionsLeft > 0);
+                const stillValid = withinWindow && hasProgress;
+                const preferred = (stillValid && ls.laptopId != null)
+                    ? gameState.laptops.find(l => l.id === ls.laptopId && !l.claimedBy) : null;
+                const target = stillValid ? (preferred || gameState.laptops.find(l => !l.claimedBy)) : null;
+
+                if (target && isFree) {
+                    // Restore free mode on the target laptop
+                    const freeDoc = {
+                        claimedBy: gameState.userId,
+                        phase: 'free-work', mode: 'free',
+                        createdAt: ls.createdAt || now,
+                        endTime: 0, totalWorkMs: ls.totalWorkMs || 0,
+                        breakEndTime: 0, savedAt: 0,
+                    };
+                    update(ref(database), {
+                        [lobbyPath(`pomodoro/${target.id}`)]: freeDoc,
+                        [`users/${gameState.userId}/lastPomoSession`]: null,
+                    });
+                    applyPomodoroStateToLaptop(target, freeDoc);
+                    activeLaptopId = target.id;
+                    restoringFreeMode = true;
+                    const fm = gameState.freeMode;
+                    fm.active        = true;
+                    fm.laptopId      = target.id;
+                    fm.isShared      = false;
+                    fm.phase         = 'idle';
+                    fm._createdAt    = ls.createdAt || now;
+                    fm.totalWorkMs   = ls.totalWorkMs || 0;
+                    fm.workStartTime = 0;
+                    fm.breakEndTime  = 0;
+                    fm.breakPromptShown = false;
+                    fm.needsResume   = true;
+                } else if (target) {
                     const restoredPhase = ls.phase === 'break' ? 'break' : 'work';
                     const phaseMins = restoredPhase === 'work' ? (ls.workDuration || 25) : (ls.breakDuration || 5);
                     const newEndTime = now + phaseMins * 60000;
@@ -3118,13 +3339,13 @@ function startGame(userData) {
                         createdAt: ls.createdAt || now,
                     };
                     update(ref(database), {
-                        [lobbyPath(`pomodoro/${freeLaptop.id}`)]: restoredDoc,
+                        [lobbyPath(`pomodoro/${target.id}`)]: restoredDoc,
                         [`users/${gameState.userId}/lastPomoSession`]: null,
                     });
-                    applyPomodoroStateToLaptop(freeLaptop, restoredDoc);
-                    activeLaptopId = freeLaptop.id;
+                    applyPomodoroStateToLaptop(target, restoredDoc);
+                    activeLaptopId = target.id;
                     gameState.pomodoro.active       = true;
-                    gameState.pomodoro.laptopId     = freeLaptop.id;
+                    gameState.pomodoro.laptopId     = target.id;
                     gameState.pomodoro.phase        = restoredPhase;
                     gameState.pomodoro.endTime      = newEndTime;
                     gameState.pomodoro.sessionsLeft = ls.sessionsLeft;
@@ -3134,7 +3355,7 @@ function startGame(userData) {
                     gameState.pomodoro.createdAt    = ls.createdAt || now;
                     locked = restoredPhase === 'work';
                 } else {
-                    // Stale or no free device — discard
+                    // Stale (>4h), no progress, or no free device — discard.
                     update(ref(database), { [`users/${gameState.userId}/lastPomoSession`]: null });
                 }
             }
@@ -3174,6 +3395,13 @@ function startGame(userData) {
             updatePlayerPosition(spawnX, spawnY);
             gameState.positionInitialized = true;
             if (locked) gameState.isLockedIn = true;
+
+            // Arm the unified disconnect handlers for whatever solo session we
+            // restored/reclaimed above (pomo or free), so an immediate disconnect
+            // after login frees the laptop and preserves the session for reclaim.
+            if ((gameState.pomodoro.active || gameState.freeMode.active) && _sessionIsSolo()) {
+                trackSessionForReclaim();
+            }
         });
     });
 
@@ -4507,11 +4735,23 @@ function formatRaceTime(ms) {
 }
 
 function showLaptopModeSelect() {
+    // Mobile ghost-click guard: the tap that opens this modal is followed ~300ms
+    // later by a synthesized mouse `click` at the same screen point. If a modal
+    // button happens to sit under that point it fires immediately (free mode /
+    // pomo started "without asking"). Record the open time and ignore button
+    // presses that arrive within the ghost-click window.
+    gameState._modeSelectOpenedAt = Date.now();
     if (gameState.isSirajGhost) {
         document.getElementById('test-mode-modal').classList.add('active');
     } else {
         document.getElementById('mode-select-modal').classList.add('active');
     }
+}
+
+// True while we should swallow synthesized ghost clicks just after the mode
+// select modal opened (covers the iOS/Android touch→click ~300ms passthrough).
+function modeSelectGhostClick() {
+    return gameState._modeSelectOpenedAt && (Date.now() - gameState._modeSelectOpenedAt) < 500;
 }
 
 function setupModeSelectUI() {
@@ -4523,11 +4763,13 @@ function setupModeSelectUI() {
     });
 
     document.getElementById('mode-select-pomo')?.addEventListener('click', () => {
+        if (modeSelectGhostClick()) return;
         modal.classList.remove('active');
         document.getElementById('pomodoro-modal').classList.add('active');
     });
 
     document.getElementById('mode-select-free')?.addEventListener('click', () => {
+        if (modeSelectGhostClick()) return;
         modal.classList.remove('active');
         startFreeMode(null, false);
     });
@@ -4695,6 +4937,9 @@ function setupTestModeUI() {
         update(ref(database), updates);
         if (gameState.isSirajGhost) {
             onDisconnect(ref(database, lobbyPath(`pomodoro/${laptop.id}`))).remove();
+        } else {
+            // Free the laptop + stash the session on disconnect (reclaim within 4h).
+            trackSessionForReclaim();
         }
         startKidnapAnimation(laptop);
 
@@ -4790,6 +5035,9 @@ function startPomodoroPhase(phase) {
             updates[spPath(`live/${_sp.sessionId}/currentPhase`)] = phase;
         }
         update(ref(database), updates);
+        // Refresh the reclaim stash + re-arm disconnect handlers with the new
+        // phase/endTime (no-op for Siraj and shared-pomo via internal guards).
+        trackSessionForReclaim();
     }
 
     // Prayer panel: compact during break (only show next prayer), full during work
@@ -4897,6 +5145,15 @@ function doLogout() {
                 .catch(() => window.location.reload());
         } else {
             const logoutCleanups = {};
+            // Explicit logout = clean end. Cancel the disconnect handlers + wipe the
+            // reclaim stash so we don't keep a laptop or reload into an old session.
+            cancelSessionDisconnect(false);
+            logoutCleanups[`users/${gameState.userId}/lastPomoSession`] = null;
+            const _activeLap = _activeSessionLaptopId();
+            if (_activeLap != null && _sessionIsSolo()) {
+                onDisconnect(ref(database, lobbyPath(`pomodoro/${_activeLap}`))).cancel();
+                logoutCleanups[lobbyPath(`pomodoro/${_activeLap}`)] = null;
+            }
             if (gameState.freeMode.active && gameState.freeMode.laptopId != null) {
                 // Cancel the onDisconnect so explicit logout fully clears the session
                 onDisconnect(ref(database, lobbyPath(`pomodoro/${gameState.freeMode.laptopId}`))).cancel();
@@ -5098,6 +5355,11 @@ function updatePlayerPosition(x, y) {
     updates[`users/${gameState.userId}/x`] = x;
     updates[`users/${gameState.userId}/y`] = y;
     updates[`users/${gameState.userId}/lobby`] = gameState.selectedLobby;
+    // Keep presence alive on every position write so a stale `activeInGame=false`
+    // (left by an onDisconnect during a network blip / PC sleep) self-heals — this
+    // is what otherwise renders a reconnected user as a low-opacity VC ghost with
+    // no "أعمل على" label or timer for everyone else.
+    updates[`users/${gameState.userId}/activeInGame`] = true;
     if (player) {
         updates[`users/${gameState.userId}/isMoving`] = player.isMoving || false;
         updates[`users/${gameState.userId}/isSprinting`] = player.isSprinting || false;
@@ -5544,6 +5806,18 @@ function gameLoop(timestamp) {
             gameState._lastPosHeartbeat = _now;
             const _p = gameState.players[gameState.userId];
             if (_p) updatePlayerPosition(_p.x, _p.y);
+        }
+    }
+
+    // Presence heartbeat: independent of any session (the position heartbeat above
+    // only runs while locked-in). An idle / walking user whose `activeInGame` was
+    // flipped false by a disconnect must still self-heal back to true while the
+    // page is open, or they stay a low-opacity ghost for everyone else.
+    if (gameState.userId && !gameState.isSirajGhost) {
+        const _now = Date.now();
+        if (!gameState._lastPresenceHeartbeat || _now - gameState._lastPresenceHeartbeat > 10000) {
+            gameState._lastPresenceHeartbeat = _now;
+            update(ref(database), { [`users/${gameState.userId}/activeInGame`]: true });
         }
     }
 
@@ -7823,6 +8097,7 @@ function updatePomodoro() {
                 try {
                     const completedTaskText = getCurrentTaskText();
                     gameState.pomodoro.active = false;
+                    cancelSessionDisconnect(true);
                     const updates = {};
                     updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
                     update(ref(database), updates);
@@ -7872,6 +8147,7 @@ function updatePomodoro() {
 
             if (gameState.pomodoro.sessionsLeft <= 0 || shouldExpirePomodoroAfterCurrentTimer(gameState.pomodoro)) {
                 gameState.pomodoro.active = false;
+                cancelSessionDisconnect(true);
                 const updates = {};
                 updates[lobbyPath(`pomodoro/${gameState.pomodoro.laptopId}`)] = null;
                 update(ref(database), updates);
@@ -10981,12 +11257,13 @@ function startFreeMode(laptopId, isShared = false) {
         breakEndTime: 0,
         savedAt:     0,
     }});
-    // On disconnect: keep laptop claimed but mark as 'wait' so others see the AFK badge.
-    // Don't remove — we want to restore on reconnect.
-    onDisconnect(ref(database, lobbyPath(`pomodoro/${laptop.id}`))).update({
-        phase: 'wait',
-        savedAt: { '.sv': 'timestamp' },
-    });
+    // On disconnect: free the laptop immediately (others see nothing — no AFK
+    // ghost) and stash the session so it can be reclaimed within 4h on next login.
+    if (gameState.isSirajGhost) {
+        onDisconnect(ref(database, lobbyPath(`pomodoro/${laptop.id}`))).remove();
+    } else {
+        trackSessionForReclaim();
+    }
 
     document.getElementById('pomodoro-modal')?.classList.remove('active');
     updatePomoLeaveBtn();
@@ -11036,13 +11313,9 @@ function saveFreeModStateToFirebase() {
         savedAt:      Date.now(),
     }});
 
-    // Re-register onDisconnect with the current totalWorkMs so a sudden disconnect
-    // doesn't roll back to the last-saved value.
-    onDisconnect(ref(database, lobbyPath(`pomodoro/${fm.laptopId}`))).update({
-        phase:       'wait',
-        totalWorkMs: currentTotalMs,
-        savedAt:     { '.sv': 'timestamp' },
-    });
+    // Refresh the reclaim stash (with current totalWorkMs) + re-arm the disconnect
+    // handlers so a sudden disconnect frees the laptop and preserves progress.
+    if (!gameState.isSirajGhost) trackSessionForReclaim();
 }
 
 function updateFreeMode() {
@@ -11220,7 +11493,9 @@ function endFreeMode() {
     }
 
     if (fm.laptopId != null) {
-        // Cancel the onDisconnect 'wait' handler so explicit end doesn't trigger it
+        // Clean end — cancel the disconnect handlers + wipe the reclaim stash, then
+        // free the laptop. (cancelSessionDisconnect also cancels the laptop remove.)
+        cancelSessionDisconnect(true);
         onDisconnect(ref(database, lobbyPath(`pomodoro/${fm.laptopId}`))).cancel();
         update(ref(database), { [lobbyPath(`pomodoro/${fm.laptopId}`)]: null });
         const lp = gameState.laptops.find(l => l.id === fm.laptopId);
@@ -11609,6 +11884,10 @@ function exitPomoNow() {
         }
         cleanupSpLocal(true);
     }
+
+    // Clean exit — cancel the disconnect handlers and wipe the reclaim stash so
+    // we spawn fresh next time instead of being offered an old session.
+    cancelSessionDisconnect(true);
 
     // Release laptop on Firebase — only if WE own it (host/solo).
     // Guests share the host's laptop; releasing it would kill the host's session.
