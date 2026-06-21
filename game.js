@@ -1235,8 +1235,20 @@ class FocusYouTubePlayer {
                     titleEl.textContent = `YouTube • ${this.videoId}`;
                 }
             }
-            if (gameState.userId && (Math.floor(cur) % 5 === 0)) {
-                update(ref(database), { [`users/${gameState.userId}/focusPlayer/timestamp`]: Math.floor(cur) });
+            // Persist the playback position so the user resumes where they left
+            // off next login. This is PRIVATE data nobody else reads, yet every
+            // change fans out to every client on the /users listener — so save
+            // sparingly: at most once every 15s, and only when the second has
+            // actually advanced (the 500ms poll would otherwise double-write).
+            // 15s granularity = you resume ≤15s behind, imperceptible for audio.
+            if (gameState.userId) {
+                const sec = Math.floor(cur);
+                const now = Date.now();
+                if (sec !== this._lastSavedTs && (!this._lastTsSaveAt || now - this._lastTsSaveAt >= 15000)) {
+                    this._lastSavedTs = sec;
+                    this._lastTsSaveAt = now;
+                    update(ref(database), { [`users/${gameState.userId}/focusPlayer/timestamp`]: sec });
+                }
             }
         } catch(e) {}
     }
@@ -2993,9 +3005,22 @@ function setupUserSelection() {
     let firstRender = true;
     let prevUsersKey = null;
 
-    authReady.then(() => onValue(usersRef, (snapshot) => {
+    // Tear down any previous welcome-screen subscription before re-attaching
+    // (the user can bounce between lobby/user screens). Without this each visit
+    // leaks another listener on the GLOBAL /users node.
+    if (gameState._userSelectionUnsub) { try { gameState._userSelectionUnsub(); } catch (_) {} gameState._userSelectionUnsub = null; }
+
+    authReady.then(() => {
+        gameState._userSelectionUnsub = onValue(usersRef, (snapshot) => {
         const users = snapshot.val();
-        if (gameState.userId) return;
+        // Once in-game the in-game listener (listenToPlayers) is the source of
+        // truth. Detach this welcome-screen listener so we don't keep streaming
+        // the entire global /users node (both lobbies) for the whole session —
+        // a permanent, redundant download cost against the 10GB/mo cap.
+        if (gameState.userId) {
+            if (gameState._userSelectionUnsub) { try { gameState._userSelectionUnsub(); } catch (_) {} gameState._userSelectionUnsub = null; }
+            return;
+        }
 
         const WAJEHA_CAT = '📺 واجهة المدونة';
         const onlineUsers = users
@@ -3056,7 +3081,8 @@ function setupUserSelection() {
         } else {
             renderUsers();
         }
-    }));
+        });
+    });
 }
 
 function setupModal() {
@@ -5348,6 +5374,9 @@ function initializePlayerPosition() {
 }
 
 function listenToPlayers() {
+    // We're in-game now — drop the welcome-screen subscription on the global
+    // /users node so we don't pay for two full-node streams per client.
+    if (gameState._userSelectionUnsub) { try { gameState._userSelectionUnsub(); } catch (_) {} gameState._userSelectionUnsub = null; }
     const usersRef = ref(database, 'users');
     // The category that belongs to the active lobby – used to exclude the other lobby
     const allowedCategory = LOBBY_CONFIG[gameState.selectedLobby]?.categoryName;

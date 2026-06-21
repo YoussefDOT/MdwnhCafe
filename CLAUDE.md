@@ -301,6 +301,30 @@ onDisconnect(ref(database, path)).remove();
 
 ---
 
+## Firebase Cost Rules — DEFAULT TO THE CHEAPEST OPTION (10GB/mo download cap)
+
+> Firebase Realtime Database bills **downloads** (data sent to clients), and the free tier caps at **10GB/month**. The download cost of a piece of data is roughly **(bytes that changed) × (number of clients listening at that path) × (how often it changes)**. Every `onValue` listener is a tap that streams to that client; every write fans out a download to *every* client listening to that path. **When adding any feature, pick the option that minimizes that product.** If two designs work, choose the one that downloads less — even if it's slightly more code.
+
+**The decision checklist for any new feature that touches Firebase:**
+
+1. **Does this even need Firebase?** If the data is high-frequency and ephemeral (live positions, cursor, typing, transient animation state), use the **WebSocket relay** (`presence-server/`, `sendPositionWS`), **not** Firebase. Firebase is only for state that must *persist* (survive reload / be seen by late joiners). Per-frame or per-second writes must never go to Firebase.
+
+2. **Scope the listener as narrowly as possible.** Listen at `lobbyPath(...)` or a single child (`users/{uid}/foo`), never at a broad node like `/users` if you can avoid it — a broad listener downloads *every* child's changes (including the other lobby's). Prefer `get()` (one-time read) over `onValue` when you only need the value once (login restore, a count, a snapshot). Reserve `onValue` for data that genuinely must update live.
+
+3. **Always store the unsub and tear it down** when the feature closes / the user logs out / leaves the screen. A listener left attached keeps downloading for the rest of the session. (Bug we hit: the welcome-screen `/users` listener was never detached, so every in-game client streamed the entire global users node — both lobbies — forever. Fixed via `gameState._userSelectionUnsub`.)
+
+4. **Keep frequently-changing docs small; split out big/static fields.** Don't bundle large or rarely-changing data (avatars/data-URLs, long text, blobs) into a doc that also holds fields written often (x/y/flags) — every small change re-streams the whole child to every listener. Store big static data under its own key, written once. Never store base64/data-URL images in a doc that's in a live listener's path.
+
+5. **Compute locally instead of syncing.** Anything a client can derive on its own (a countdown from a single `endTime`, progress from `spawnTime`, elapsed from `workStartTime`) must be written **once** and computed per-frame locally — never streamed tick-by-tick. This is why the pomodoro doc only changes at phase transitions.
+
+6. **Don't re-write unchanged values in a loop.** RTDB suppresses no-op `value` events, but only if the value is *byte-identical*. Heartbeats that re-assert the same value are fine; heartbeats that recompute a slightly-different number every tick will fan out a download every tick.
+
+7. **Write with `update()` (multi-path) not many `set()`s**, and write only the fields that changed — fewer/smaller writes = fewer/smaller downloads for everyone listening.
+
+**When in doubt, measure the fan-out:** ask "how many clients are listening to this path, and how often will this change?" If the answer is "everyone in the lobby, several times a second," redesign it (relay, local compute, or narrower scope) before shipping.
+
+---
+
 ## Prayer System
 
 `initPrayerSystem()` → `fetchPrayerTimes()` (calls Adhan API) → schedules `checkPrayerTrigger()` to run each minute. On trigger: `triggerPrayerOverlay()` plays adhan sound + rain particles + full-screen overlay.
