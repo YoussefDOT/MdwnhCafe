@@ -359,7 +359,6 @@ async function initDiscordOAuth() {
         // don't strand them on the welcome screen. Fresh logins (flag not set yet)
         // still see the welcome screen.
         if (localStorage.getItem(ACTIVE_SESSION_KEY) === user.id) {
-            gameState._resumeEntry = true;   // mid-session reload → plain black fade, no entrance anim/sound
             enterGameAsDiscordUser(user, resolvedLobby);
         } else {
             showDiscordWelcomeScreen(user, resolvedLobby);
@@ -2790,6 +2789,7 @@ function init() {
     initAmbientMotes();
     initLaptops();
     initDiscordOAuth();      // Discord button on lobby; auto-resume if session exists
+    if (JUICE_ENTRANCE) _preloadEntranceSound();   // JUICE: decode the entrance sound NOW so it's ready (no delay)
     setupJuiceUi();          // JUICE: wire the UI blip early so the login/lobby menu blips too
 }
 
@@ -3583,6 +3583,11 @@ function startGame(userData) {
             if ((gameState.pomodoro.active || gameState.freeMode.active) && _sessionIsSolo()) {
                 trackSessionForReclaim();
             }
+
+            // Now that session state is known, choose the entrance: a plain black
+            // fade if we restored into an active session (seamless), otherwise the
+            // full cinematic entrance — including on a refresh while NOT in a session.
+            beginEntrance(gameState.pomodoro.active || gameState.freeMode.active);
         });
     });
 
@@ -3684,39 +3689,56 @@ function _playEntranceSound() {
     } catch (_) {}
 }
 
+// Put up the black overlay immediately, but DON'T decide the entrance yet — we
+// only know whether we're restoring into an active session once the async
+// Firebase restore resolves. beginEntrance() (called from that restore, and from
+// a failsafe timer) then picks: plain fade if in a session, full cinematic
+// entrance otherwise. The sound is preloaded long before this (in init()).
 function playEntranceSequence() {
     if (!JUICE_ENTRANCE || gameState.isSirajGhost) return;
+    _preloadEntranceSound();   // idempotent — already kicked off at init()
 
-    // Full-screen black overlay above everything.
     const el = document.createElement('div');
     el.id = 'entrance-blackout';
     el.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99999;'
         + 'pointer-events:none;opacity:1;';
     document.body.appendChild(el);
 
-    // Mid-session reload (auto-resume): NO entrance — just a plain black fade-in.
-    // No zoom, no character drop, no sound, no extra AudioContext. Re-entering an
-    // active session must feel seamless (and not disturb YouTube / focus sounds).
-    if (gameState._resumeEntry) {
-        gameState._resumeEntry = false;
-        el.style.transition = 'opacity 0.7s ease';
-        requestAnimationFrame(() => { el.style.opacity = '0'; });
-        setTimeout(() => { try { el.remove(); } catch (_) {} }, 820);
+    _entrance.el = el;
+    _entrance.pending = true;
+    // Failsafe: if the restore callback never fires, default to a full entrance.
+    if (_entrance._failsafe) clearTimeout(_entrance._failsafe);
+    _entrance._failsafe = setTimeout(() => { if (_entrance.pending) beginEntrance(false); }, 4000);
+}
+
+// inSession = true → seamless plain black fade (no zoom/drop/sound). This is what
+// a mid-session refresh gets. Not in a session → full cinematic entrance, even on
+// a refresh.
+function beginEntrance(inSession) {
+    if (!_entrance.pending) return;
+    _entrance.pending = false;
+    if (_entrance._failsafe) { clearTimeout(_entrance._failsafe); _entrance._failsafe = null; }
+    const el = _entrance.el;
+
+    if (inSession) {
+        if (el) {
+            el.style.transition = 'opacity 0.7s ease';
+            requestAnimationFrame(() => { el.style.opacity = '0'; });
+            setTimeout(() => { try { el.remove(); } catch (_) {} }, 820);
+        }
+        _entrance.el = null;
         return;
     }
 
-    _preloadEntranceSound();
-
-    // Reset state for this login.
+    // Full cinematic entrance — timing starts now (preserves the overlay ref).
     Object.assign(_entrance, {
         active: true, start: performance.now(), targetZoom: 1,
         camSnapped: false, dropBaseSet: false, dropBaseT: 0,
         charVisible: false, dropComplete: false,
         dropY: 0, dropScale: 1, dropBlur: 0, squashX: 1, squashY: 1,
         shakeFired: false, impactT: 0, shakeAmp: 0, shakeX: 0, shakeY: 0,
+        el,
     });
-    _entrance.el = el;   // updateEntrance fades this overlay out
-
     gameState.zoom = ENTRY.zoomStart;
     _playEntranceSound();
 }
