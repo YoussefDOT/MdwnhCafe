@@ -3623,6 +3623,7 @@ function startGame(userData) {
 //  juice.css (remove its <link> in index.html to revert the UI animations).
 // ═══════════════════════════════════════════════════════════════════════════
 const JUICE_ENTRANCE = true;
+const JUICE_EXIT_MS = 420;   // scale-down duration when a remote player disconnects
 
 const ENTRY = {
     fadeMs:      1300,   // black overlay fade-out duration
@@ -3631,8 +3632,6 @@ const ENTRY = {
     dropStartMs: 1480,   // when the character appears (waits ~0.5s longer)
     dropMs:      200,    // snaps down to normal size FAST (0.2s)
     startScale:  16,     // appears huge (≈screen-filling), then shrinks to normal
-    blurPerScale: 3.4,   // blur ∝ (scale−1); device-pixel space, so it must scale up
-    blurMaxPx:   52,     // clamp so a giant blur can't tank a frame
 };
 
 const _entrance = {
@@ -3765,10 +3764,6 @@ function updateEntrance(now) {
             if (p > 0.74) { const q = (p - 0.74) / 0.26; scale *= 1 - Math.sin(q * Math.PI) * 0.045; }
             e.dropScale = scale;
             e.dropY = 0;
-            // Out-of-focus blur, coupled to scale so it's actually visible on the
-            // giant sprite (canvas filter blur is in device px, not scaled by the
-            // transform). Sharpens to 0 as the avatar reaches normal size.
-            e.dropBlur = Math.min(ENTRY.blurMaxPx, Math.max(0, scale - 1) * ENTRY.blurPerScale);
             // One soft screenshake on landing.
             if (!e.shakeFired && p >= 0.74) {
                 e.shakeFired = true;
@@ -3808,6 +3803,18 @@ function updateEntrance(now) {
         e.active = false;
         e.charVisible = true;
         e.dropY = 0; e.dropScale = 1; e.dropBlur = 0; e.squashX = 1; e.squashY = 1;
+    }
+}
+
+// JUICE: delete remote players once their disconnect scale-down has finished.
+function updateLeavingPlayers() {
+    if (!JUICE_ENTRANCE) return;
+    const now = performance.now();
+    for (const id of Object.keys(gameState.players)) {
+        const p = gameState.players[id];
+        if (p && p._exitT != null && now - p._exitT >= JUICE_EXIT_MS) {
+            delete gameState.players[id];
+        }
     }
 }
 
@@ -5787,6 +5794,8 @@ function listenToPlayers() {
                         };
                     } else {
                         const player = gameState.players[userId];
+                        // JUICE: reconnected mid scale-down → cancel the exit and re-pop in.
+                        if (player._exitT != null) { player._exitT = null; player._entryT = performance.now(); }
                         player.username = userData.username;
                         player.channelName = userData.channelName;
                         player.avatar = userData.avatar;
@@ -5839,7 +5848,16 @@ function listenToPlayers() {
                 }
             }
             Object.keys(gameState.players).forEach(id => {
-                if (id !== gameState.userId && !currentIdsInSnapshot.has(id)) { delete gameState.players[id]; }
+                if (id === gameState.userId || currentIdsInSnapshot.has(id)) return;
+                const p = gameState.players[id];
+                // JUICE: scale the avatar DOWN before removing (mirror of the scale-up
+                // on connect). The actual delete happens in updateLeavingPlayers once the
+                // animation finishes. With juice off, remove immediately as before.
+                if (JUICE_ENTRANCE && p) {
+                    if (p._exitT == null) p._exitT = performance.now();
+                } else {
+                    delete gameState.players[id];
+                }
             });
             const playerCount = Object.keys(gameState.players).length;
             const countElem = document.getElementById('player-count');
@@ -6513,6 +6531,7 @@ function gameLoop(timestamp) {
         updatePlayerRenderPositions();
         updateCamera();
         updateEntrance(timestamp);   // JUICE: login entrance (no-op once finished)
+        updateLeavingPlayers();      // JUICE: finish disconnect scale-downs
         updatePlayerBobbing();
         updateNametags();
         updateAvatarColorFade();
@@ -9399,7 +9418,7 @@ function drawPlayers(onlyLocal = false) {
         }
 
         // JUICE: entrance drop (local player) + scale-in pop (remote players).
-        let _juiceScale = 1, _juiceDropY = 0, _juiceSquashX = 1, _juiceSquashY = 1, _juiceBlur = 0;
+        let _juiceScale = 1, _juiceDropY = 0, _juiceSquashX = 1, _juiceSquashY = 1;
         if (JUICE_ENTRANCE) {
             if (isCurrentUser && _entrance.active) {
                 if (!_entrance.charVisible) continue;   // pre-drop: hidden until it appears
@@ -9407,7 +9426,11 @@ function drawPlayers(onlyLocal = false) {
                 _juiceDropY  = _entrance.dropY;
                 _juiceSquashX = _entrance.squashX;
                 _juiceSquashY = _entrance.squashY;
-                _juiceBlur    = _entrance.dropBlur;
+            } else if (!isCurrentUser && player._exitT != null) {
+                // Scale DOWN on disconnect — mirror of the scale-up on connect.
+                const xt = Math.min(1, Math.max(0, (performance.now() - player._exitT) / JUICE_EXIT_MS));
+                const c1 = 1.70158, c3 = c1 + 1;
+                _juiceScale = Math.max(0, 1 - (c3 * xt * xt * xt - c1 * xt * xt));   // 1 − easeInBack
             } else if (!isCurrentUser && player._entryT != null) {
                 const et = (performance.now() - player._entryT) / 460;
                 if (et >= 1) { player._entryT = null; }
@@ -9444,7 +9467,6 @@ function drawPlayers(onlyLocal = false) {
         ctx.translate(screenX + coopDX, screenY + workBob + coopDY + tpFlyOffsetY + _juiceDropY);
         ctx.rotate(workAngle);
         ctx.scale(workScaleX * _juiceScale * _juiceSquashX, workScaleY * _juiceScale * _juiceSquashY);
-        if (_juiceBlur > 0.1) ctx.filter = `blur(${_juiceBlur}px)`;   // JUICE: entrance out-of-focus → sharp
 
         if (grayMix > 0.01) {
             ctx.filter = `saturate(${colorAlpha}) brightness(${0.72 + 0.28 * colorAlpha})`;
