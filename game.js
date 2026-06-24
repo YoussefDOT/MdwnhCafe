@@ -507,8 +507,15 @@ class FocusAudioEngine {
             const arrayBuffer = await response.arrayBuffer();
             return await this.ctx.decodeAudioData(arrayBuffer);
         };
-        // Core UI sounds (sequential — small, fast)
+        // Core UI sounds (sequential — small, fast).
+        // The entrance whoosh + UI blip load FIRST: the entrance sound must be ready
+        // the instant login finishes, otherwise it lags behind the cinematic (and on
+        // a gesture-less auto-resume it must be decoded before the first tap so it
+        // can fire immediately). Loading them 8th (behind the timer/invite sounds)
+        // was the "audio delayed by a bit" on re-entry.
         try {
+            this.buffers.entranceSound  = await loadBuffer('Sound/Enterance_Sound.mp3');   // JUICE — load first
+            this.buffers.uiBlip         = await loadBuffer('Sound/Menu_Ui.mp3');           // JUICE
             this.buffers.timeBreak      = await loadBuffer('Sound/TimeBreak.mp3');
             this.buffers.timeReturn     = await loadBuffer('Sound/TimeReturn.mp3');
             this.buffers.kidnap         = await loadBuffer('Sound/LaptopGrab.mp3');
@@ -516,8 +523,6 @@ class FocusAudioEngine {
             this.buffers.breakAdded     = await loadBuffer('Sound/BreakAdded.mp3');
             this.buffers.inviteSent     = await loadBuffer('Sound/Invite_Sent.mp3');
             this.buffers.inviteAccepted = await loadBuffer('Sound/Invite_Accepted.mp3');
-            this.buffers.entranceSound  = await loadBuffer('Sound/Enterance_Sound.mp3');   // JUICE
-            this.buffers.uiBlip         = await loadBuffer('Sound/Menu_Ui.mp3');           // JUICE
         } catch(e) {
             console.log("Failed to load Web Audio sound effects:", e);
         }
@@ -3701,18 +3706,20 @@ const _entrance = {
 // the "focus sounds vanish when I move" bug. Everything routes through the focus
 // engine's ONE context via its registered buffers (FocusAudioEngine.playPitched),
 // and we never touch its init timing (which would disturb the focus sounds).
-let _entPending = false, _entPendingAt = 0;
+let _entPending = false, _entPendingAt = 0, _entWantsPlay = false, _entFirstWantAt = 0;
 
-// On a gesture-less refresh the context starts suspended (autoplay block). Resume
-// the focus engine's context on the first interaction of ANY kind, and flush a
-// queued entrance sound so it isn't lost.
+// On a gesture-less refresh (OAuth auto-resume logs you straight in, no "Enter"
+// click) the AudioContext starts suspended — the browser BLOCKS all audio until
+// the first real interaction. That first tap/key/click is the only moment we're
+// allowed to start the whoosh, so resume the context AND (re)fire the queued
+// entrance sound here — even if its original retry loop already gave up.
 function _juiceWireResume() {
     if (gameState._juiceResumeWired) return;
     gameState._juiceResumeWired = true;
     const onGesture = () => {
         const fe = gameState.focusAudioEngine;
         if (fe && fe.ctx && fe.ctx.state === 'suspended') fe.ctx.resume().catch(() => {});
-        if (_entPending) _playEntranceSound();
+        if (_entWantsPlay) _playEntranceSound();
     };
     ['pointerdown', 'mousedown', 'keydown', 'touchstart', 'click'].forEach(ev =>
         document.addEventListener(ev, onGesture, { capture: true, passive: true }));
@@ -3741,17 +3748,24 @@ function _playEntranceSound() {
     const fe = gameState.focusAudioEngine;
     if (!fe) return;
     if (!fe.ctx) { try { fe.init(); } catch (_) {} }
-    if (!_entPending) { _entPending = true; _entPendingAt = performance.now(); }
+    // Mark the INTENT to play. This survives the retry loop giving up, so the first
+    // gesture after a gesture-less auto-resume re-fires it (onGesture checks this).
+    if (!_entWantsPlay) { _entWantsPlay = true; _entFirstWantAt = performance.now(); }
+    // …but don't fire a stale whoosh forever — a returning user who finally clicks
+    // 30s later shouldn't hear an out-of-context intro sound.
+    if (performance.now() - _entFirstWantAt > 30000) { _entWantsPlay = false; _entPending = false; return; }
+    if (_entPending) return;                            // a retry loop is already running
+    _entPending = true; _entPendingAt = performance.now();
     const tick = () => {
-        if (!_entPending) return;                       // already played / cancelled
+        if (!_entPending) return;
         const c = fe.ctx;
         if (c && c.state === 'suspended') c.resume().catch(() => {});
-        if (fe.playPitched('entranceSound', 0.92 + Math.random() * 0.26, 0.42)) {
-            _entPending = false;                        // success
+        if (_entWantsPlay && fe.playPitched('entranceSound', 0.92 + Math.random() * 0.26, 0.42)) {
+            _entPending = false; _entWantsPlay = false;  // played for real
             return;
         }
         if (performance.now() - _entPendingAt < 9000) setTimeout(tick, 130);
-        else _entPending = false;                       // give up after ~9s
+        else _entPending = false;                        // pause loop; a gesture re-arms it
     };
     tick();
 }
