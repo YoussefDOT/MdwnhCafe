@@ -3832,15 +3832,17 @@ function beginEntrance(inSession) {
     }
 
     // Full cinematic entrance — timing starts now (preserves the overlay ref).
-    // Mobile gets a MUCH lighter version: NO camera zoom (the zoomed-out frame
-    // draws far more of the world for ~1.7s) and a small drop scale (a
-    // screen-filling sprite is a costly raster spike). That sustained + spiked
-    // GPU/CPU load was starving the audio thread → the entrance-sound "crackle",
-    // and was what lagged the intro. Desktop keeps the full cinematic version.
+    // Mobile gets a GENTLER version: a softer zoom-in (0.80 vs desktop's 0.62) so
+    // the camera reveals ~1.5x the world area for ~1.7s instead of ~2.6x — most of
+    // the cinematic feel at a fraction of the per-frame draw cost that was starving
+    // the audio thread (the entrance-sound "crackle"). The weakest phones (potato
+    // tier) still skip the zoom. We keep the small drop scale either way — the old
+    // screen-filling 16x sprite was a costly raster spike. Desktop is unchanged.
     const mobile = isMobile();
+    const mobileZoom = isPotato() ? 1 : 0.80;
     Object.assign(_entrance, {
         active: true, start: performance.now(), targetZoom: 1,
-        zoomStart: mobile ? 1 : ENTRY.zoomStart,
+        zoomStart: mobile ? mobileZoom : ENTRY.zoomStart,
         startScale: mobile ? 2.4 : ENTRY.startScale,
         camSnapped: false, dropBaseSet: false, dropBaseT: 0,
         charVisible: false, dropComplete: false,
