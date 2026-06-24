@@ -2790,7 +2790,6 @@ function init() {
     initLaptops();
     initDiscordOAuth();      // Discord button on lobby; auto-resume if session exists
     _juiceWireResume();      // JUICE: resume audio on the first gesture (refresh autoplay)
-    if (JUICE_ENTRANCE) _preloadEntranceSound();   // JUICE: decode the entrance sound NOW so it's ready (no delay)
     setupJuiceUi();          // JUICE: wire the UI blip early so the login/lobby menu blips too
 }
 
@@ -3280,8 +3279,16 @@ function startGame(userData) {
 
     // Initialize Focus Audio Engine & Setup Focus UI
     gameState.focusAudioEngine = new FocusAudioEngine();
+    gameState.focusAudioEngine.init();   // create its context now — ALL juice audio shares it
     gameState.focusYTPlayer = new FocusYouTubePlayer();
     setupFocusPanelUI();
+
+    // JUICE: park the login-only fallback context and re-decode the juice sounds
+    // on the shared focus-engine context so playback never spins up a second
+    // competing context (which silenced focus sounds on Safari/iOS).
+    _juiceParkLoginCtx();
+    _uiSndBuf = null;  _uiLoading = false;  _preloadUiSound();
+    if (JUICE_ENTRANCE) { _entSndBuf = null; _entLoading = false; _preloadEntranceSound(); }
 
     // Set active presence in game and set up disconnect presence cleanup
     const activeRef = ref(database, `users/${gameState.userId}/activeInGame`);
@@ -3649,27 +3656,40 @@ const _entrance = {
 };
 
 // ── Shared juice audio ──────────────────────────────────────────────────────
-// ONE AudioContext for the entrance sound AND the UI blips (was two — fewer
-// contexts = less memory, important on Safari/iOS). Buffers decoded once.
+// IN-GAME all juice audio runs through the focus engine's OWN AudioContext.
+// Using a second context made Safari/iOS silence the focus sounds the moment a
+// new context started outputting (the "focus sounds vanish when I move" bug) —
+// browsers there effectively give audio output to one context. `_juiceCtx` is a
+// tiny fallback used ONLY on the login screen (no focus engine yet), and it's
+// parked once we're in-game.
 let _juiceCtx = null, _entSndBuf = null, _uiSndBuf = null;
 let _entLoading = false, _uiLoading = false;
 let _entPending = false, _entPendingAt = 0;   // entrance sound queued for the first gesture (refresh autoplay block)
 
 function _juiceCtxGet() {
-    if (_juiceCtx) return _juiceCtx;
-    try { _juiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { _juiceCtx = null; }
+    const fe = gameState.focusAudioEngine;
+    if (fe && fe.ctx) return fe.ctx;   // in-game: share the focus engine's context
+    if (!_juiceCtx) {
+        try { _juiceCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { _juiceCtx = null; }
+    }
     return _juiceCtx;
 }
 
-// On a refresh that auto-resumes, there is NO user gesture at load, so the
-// AudioContext starts suspended and the browser blocks audio until the user
-// interacts. Resume on the very first interaction of ANY kind (move/click/tap)
-// and flush a queued entrance sound so it isn't lost.
+// Once in-game, park the login-only fallback context so two running contexts
+// don't fight for audio output (which silenced the focus sounds).
+function _juiceParkLoginCtx() {
+    if (_juiceCtx) { try { _juiceCtx.suspend(); } catch (_) {} }
+}
+
+// On a refresh that auto-resumes, there's NO user gesture at load, so the context
+// starts suspended and the browser blocks audio until the user interacts. Resume
+// the active context on the first interaction of ANY kind (move/click/tap) and
+// flush a queued entrance sound so it isn't lost.
 function _juiceWireResume() {
     if (gameState._juiceResumeWired) return;
     gameState._juiceResumeWired = true;
     const onGesture = () => {
-        const c = _juiceCtx;
+        const c = _juiceCtxGet();
         if (c && c.state === 'suspended') c.resume().catch(() => {});
         if (_entPending && performance.now() - _entPendingAt < 30000) { _entPending = false; _playEntranceSound(); }
     };
@@ -3677,11 +3697,11 @@ function _juiceWireResume() {
         document.addEventListener(ev, onGesture, { capture: true, passive: true }));
 }
 
-// One-shot buffer playback with a short attack/release envelope. The envelope is
-// what kills the start/stop click that sounded like "cracking" on Android,
-// especially once the pitch is shifted. playbackRate (not detune) for the random
-// pitch — it's the more reliable path on mobile Chrome.
-function _juicePlayBuffer(buf, rate, peak) {
+// One-shot buffer playback with a short attack/release envelope (kills the
+// start/stop click → no "cracking", esp. once pitch-shifted). `limit` routes
+// through a brick-wall limiter so the louder entrance sound can't clip the
+// mobile output (the remaining crackle was amplitude clipping, not edge clicks).
+function _juicePlayBuffer(buf, rate, peak, limit) {
     const ctx = _juiceCtxGet();
     if (!ctx || !buf) return false;
     if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); return false; }
@@ -3692,14 +3712,23 @@ function _juicePlayBuffer(buf, rate, peak) {
         const g = ctx.createGain();
         const t = ctx.currentTime;
         const dur = buf.duration / rate;
-        const atk = Math.min(0.012, dur * 0.25);
-        const rel = Math.min(0.04, dur * 0.3);
+        const atk = Math.min(0.014, dur * 0.25);
+        const rel = Math.min(0.05, dur * 0.3);
         g.gain.setValueAtTime(0.0001, t);
         g.gain.exponentialRampToValueAtTime(peak, t + atk);
         g.gain.setValueAtTime(peak, t + Math.max(atk, dur - rel));
         g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        src.connect(g).connect(ctx.destination);
-        src.onended = () => { try { src.disconnect(); g.disconnect(); } catch (_) {} };   // free nodes promptly
+        src.connect(g);
+        let comp = null;
+        if (limit) {
+            comp = ctx.createDynamicsCompressor();
+            comp.threshold.value = -10; comp.knee.value = 0; comp.ratio.value = 20;
+            comp.attack.value = 0.002; comp.release.value = 0.12;
+            g.connect(comp); comp.connect(ctx.destination);
+        } else {
+            g.connect(ctx.destination);
+        }
+        src.onended = () => { try { src.disconnect(); g.disconnect(); if (comp) comp.disconnect(); } catch (_) {} };
         src.start(0);
         return true;
     } catch (_) { return false; }
@@ -3725,7 +3754,7 @@ function _playEntranceSound() {
         }).catch(() => {});
         return;
     }
-    _juicePlayBuffer(_entSndBuf, 0.9 + Math.random() * 0.32, 0.8);
+    _juicePlayBuffer(_entSndBuf, 0.92 + Math.random() * 0.26, 0.5, true);
 }
 
 // Put up the black overlay immediately, but DON'T decide the entrance yet — we
@@ -3914,7 +3943,7 @@ function _preloadUiSound() {
 }
 function _playUiBlip(rate) {
     // Quiet, with an attack/release envelope (no click/crackle on mobile).
-    _juicePlayBuffer(_uiSndBuf, rate, 0.07);
+    _juicePlayBuffer(_uiSndBuf, rate, 0.07, false);
 }
 
 // Pitch sweep state: first element of a cascade is the "heaviest" (deepest)
