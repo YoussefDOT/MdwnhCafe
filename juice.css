@@ -132,20 +132,12 @@ button:not(.focus-sounds-panel):active,
 .modal-overlay.juice-closing .pomodoro-content > .title          { animation-delay: 0.10s; }
 .modal-overlay.juice-closing .pomodoro-content > .logo-container { animation-delay: 0.11s; }
 
-/* ════════════════════════ SETTINGS PANEL ════════════════════════════════ */
-.settings-panel:not(.hidden) .settings-panel-header {
-    animation: juiceRowIn 0.36s var(--juice-spring) both;
-    animation-delay: 0.04s;
-}
-.settings-panel:not(.hidden) .settings-row {
-    animation: juiceRowIn 0.38s var(--juice-spring) both;
-}
-.settings-panel:not(.hidden) .settings-row:nth-child(1) { animation-delay: 0.08s; }
-.settings-panel:not(.hidden) .settings-row:nth-child(2) { animation-delay: 0.14s; }
-.settings-panel:not(.hidden) .settings-row:nth-child(3) { animation-delay: 0.20s; }
-.settings-panel:not(.hidden) .settings-row:nth-child(4) { animation-delay: 0.26s; }
-.settings-panel:not(.hidden) .settings-row:nth-child(5) { animation-delay: 0.32s; }
-.settings-panel:not(.hidden) .settings-row:nth-child(6) { animation-delay: 0.38s; }
+/* ════════════════════════ SETTINGS PANEL ════════════════════════════════
+   Sequencing now lives in style.css (`settingsRowIn`, category-aware delays) so
+   it stays correct with the grouped category layout. That animation name is
+   registered in _JUICE_IN_ANIMS, so each row/heading still triggers the cascade
+   blip. Don't re-add a `juiceRowIn` rule here — it double-animates and fights the
+   category-aware delays. */
 
 /* ════════════════════════ FREE-MODE PANEL (children only) ───────────────
    Root keeps its translateX(-50%) centering — animate its contents instead. */
@@ -172,6 +164,7 @@ button:not(.focus-sounds-panel):active,
     .modal-overlay.juice-closing .pomodoro-content > *,
     .modal-overlay.juice-closing .mode-select-cards .mode-card,
     .settings-panel:not(.hidden) .settings-panel-header,
+    .settings-panel:not(.hidden) .settings-category-title,
     .settings-panel:not(.hidden) .settings-row,
     .free-mode-panel:not(.hidden) > * {
         animation: none !important;

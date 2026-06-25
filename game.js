@@ -3978,7 +3978,7 @@ const JUICE_UI = true;
 // Only POP-IN animations of the in-game juiced panels trigger the cascade blip.
 // (Login/lobby elements do NOT blip on appear — they blip on button press, see
 // the pointerdown handler in setupJuiceUi.)
-const _JUICE_IN_ANIMS = new Set(['juicePop', 'juiceContainerPop', 'juiceRowIn']);
+const _JUICE_IN_ANIMS = new Set(['juicePop', 'juiceContainerPop', 'juiceRowIn', 'settingsRowIn']);
 // Elements whose pop-in should stay silent (visual animation still plays).
 const _JUICE_SILENT_SEL = '.free-mode-panel, .success-content';
 
@@ -10955,6 +10955,7 @@ function setupSettingsUI() {
         panel.classList.remove('settings-panel-closing');
         panel.classList.remove('hidden');
         settingsBtn.classList.add('active');
+        _uiSeqReset();   // start the row cascade's pitch sweep fresh (deep → high)
     }
     function closeSettingsPanel() {
         if (panel.classList.contains('hidden') || panel.classList.contains('settings-panel-closing')) return;

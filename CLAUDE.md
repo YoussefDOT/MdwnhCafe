@@ -411,7 +411,7 @@ Never animate `filter: blur()` or `transform: scale()`/`background-position` on 
 
 ## Settings Panel (`setupSettingsUI`, `#settings-panel`)
 
-Opens **under the gear button, top-right** on desktop (`top:130px; right:18px`) and mobile (`right:10px; top:110px`). Each row is a binary toggle button reflected via a `_reflect*()` helper and persisted in localStorage. Keys & defaults:
+Opens **under the gear button, top-right** on desktop (`top:130px; right:18px`) and mobile (`right:10px; top:110px`). Each row is a binary toggle button reflected via a `_reflect*()` helper and persisted in localStorage. Rows are grouped into **categories** (`.settings-category` + `.settings-category-title` header): العرض والأداء / التحكم والعمل / الأذكار والصلاة. Keys & defaults:
 
 | Key | Default | Effect |
 |---|---|---|
@@ -420,6 +420,13 @@ Opens **under the gear button, top-right** on desktop (`top:130px; right:18px`) 
 | `SETTINGS_JOYSTICK_KEY` | auto | show/hide the on-screen joystick |
 | `SETTINGS_NOIDLE_KEY` | off (`getDisableIdleAnim()`) | when **on**, freeze the local avatar's animation while working |
 | `SETTINGS_AZKAR_RANDOM_KEY` | off (`getRandomizeAzkar()`) | when **on**, shuffle morning/evening azkar order each open |
+| `SETTINGS_PRAYER_DELAY_KEY` | off (`getPrayerJamaahDelay()`) | "صلاة الجماعة" — when **on**, adds **+5 min** to every prayer time (`prayerJamaahExtraMin()`, applied in `computeNextPrayer`/`updatePrayerPanelDOM`). **Per-USER, not per-device**: source of truth is Firebase `users/{uid}/prayerJamaahDelay`, read on login and **mirrored into localStorage** so the getter stays a cheap sync read; the toggle writes both. |
+
+### Open / close animation
+Open removes `.hidden` (the `settingsPanelIn` keyframe pops it in). Close is **animated, not a snap**: `closeSettingsPanel()` adds `.settings-panel-closing` (runs `settingsPanelOut`), then `.hidden` after ~230 ms. All three close paths (close button, gear re-press, outside-click) go through it. **Closing makes no sound** (see below).
+
+### Sequenced rows + the cascade blip (sound)
+Row/heading entrance lives in **style.css** as `@keyframes settingsRowIn` with **category-aware** `animation-delay`s (scoped `.settings-panel:not(.hidden):not(.settings-panel-closing) …` so it replays on every open). Do **not** re-add the old `juiceRowIn` settings rule in juice.css — it double-animates and fights the category delays.
 
 ### Avatar working animation (`drawPlayers`, the `suppressWorkAnim` block)
 Two independent suppressions, both gated on `localInWorkPhase()` (pomodoro **or** free-mode work):
@@ -428,6 +435,18 @@ Two independent suppressions, both gated on `localInWorkPhase()` (pomodoro **or*
 
 ### End-break button (`#end-break-btn`, `endBreakEarly()`)
 "إنهاء الاستراحة" — a child of `#leave-wrap`, shown by `updatePomoLeaveBtn` only when `isBreakActive() && !isMinigameActive() && sharedPomo.phase !== 'active'` (solo pomo or free-mode break; shared pomo is host-synchronized so it's excluded). Ends the break early into the normal comeback-to-work sequence: free mode calls `endFreeModeBreak()`; solo pomo just sets `pomodoro.endTime = Date.now()` so `updatePomodoro`'s natural break-end transition (writes the `wait` doc → 2 s → kidnap) fires next frame.
+
+---
+
+## Sequenced UI Sounds (the cascade "blip") — `setupJuiceUi`, `_uiSeqRate`
+
+When a panel's elements animate in **one-by-one** (a staggered/sequenced entrance), the matching sound is a **pitch sweep**: the **first** element to appear plays the **deepest (heaviest) pitch**, and each following element steps **up** in pitch, so the **last** element to appear is the **highest**. The starting pitch is **randomised per cascade** (so two opens never sound identical). This is the house style for sequenced UI — match it for any new sequenced panel that should be audible.
+
+**How it's wired (don't reinvent it):**
+- A single capture-phase `animationstart` listener (in `setupJuiceUi`) fires one blip per element **as it pops in**. It only reacts to animation **names** in the `_JUICE_IN_ANIMS` set (`juicePop`, `juiceContainerPop`, `juiceRowIn`, `settingsRowIn`). The pitch comes from `_uiSeqRate()`: a gap >240 ms (or an explicit `_uiSeqReset()`) starts a **fresh** sweep (`idx=0`, `base = 0.78 + random*0.16`); each blip within the window does `idx++` and returns `base + min(idx,12)*0.055` (rising). `_playUiBlip(rate)` plays `uiBlip` through the focus engine (`playPitched`).
+- **Sound is opt-in by animation name, not automatic.** Sequenced elements are silent unless their keyframe name is in `_JUICE_IN_ANIMS`. To give a NEW sequenced panel the cascade: name its row keyframe and **add that name to `_JUICE_IN_ANIMS`** (that's all settings needed — `settingsRowIn`). To keep a sequenced panel **silent**, just don't register its animation name (and `_JUICE_SILENT_SEL` force-mutes specific elements even if they use a sounded name).
+- **Start each panel's sweep fresh:** call `_uiSeqReset()` when the panel opens (e.g. `openSettingsPanel`) so its first row is reliably the deepest, regardless of any recent blip.
+- **Closing must be silent.** Pop-**out**/close keyframes (`settingsPanelOut`, `juicePopOut`, …) are **not** in `_JUICE_IN_ANIMS`, so a close never blips. Never add a close/out animation name to that set.
 
 ---
 
