@@ -3838,12 +3838,19 @@ function beginEntrance(inSession) {
     // the audio thread (the entrance-sound "crackle"). The weakest phones (potato
     // tier) still skip the zoom. We keep the small drop scale either way — the old
     // screen-filling 16x sprite was a costly raster spike. Desktop is unchanged.
+    // The drop animation starts at dropStartMs (1480ms), by which time the camera
+    // zoom is ~97% done — so the sprite scale and the zoom barely overlap. The
+    // original "costly raster spike" concern was the zoom-out drawing ~2.6x the
+    // world, NOT the sprite itself. The sprite is one drawImage call for 200ms,
+    // GPU-scaled — cheap. So we can use a dramatic startScale on mobile too.
+    // Potato tier still gets a modest scale (3x) since it has reduced DPR/perf.
     const mobile = isMobile();
     const mobileZoom = isPotato() ? 1 : 0.80;
+    const mobileStartScale = isPotato() ? 3 : 10;
     Object.assign(_entrance, {
         active: true, start: performance.now(), targetZoom: 1,
         zoomStart: mobile ? mobileZoom : ENTRY.zoomStart,
-        startScale: mobile ? 2.4 : ENTRY.startScale,
+        startScale: mobile ? mobileStartScale : ENTRY.startScale,
         camSnapped: false, dropBaseSet: false, dropBaseT: 0,
         charVisible: false, dropComplete: false,
         dropY: 0, dropScale: 1, dropBlur: 0, squashX: 1, squashY: 1,
