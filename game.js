@@ -424,6 +424,11 @@ class FocusAudioEngine {
             paperDaysSwap: null,
             paperExit: null,
             paperTaskComplete: null,
+            // Work-memories (invoices) sounds
+            paperInvoiceIntro: null,
+            paperInvoiceExit: null,
+            paperInvoiceFlip: null,
+            invoiceCardSave: null,
             // Laptop boss fight
             bossAnticipate: null,
             bossAttackInitiate: null,
@@ -541,6 +546,10 @@ class FocusAudioEngine {
             this.buffers.paperDaysSwap  = await loadBuffer('Sound/Paper_DaysSwap.mp3');
             this.buffers.paperExit      = await loadBuffer('Sound/Paper_Exit.mp3');
             this.buffers.paperTaskComplete = await loadBuffer('Sound/Paper_Task_Complete.mp3');
+            this.buffers.paperInvoiceIntro = await loadBuffer('Sound/Paper_Invoice_Intro.mp3');
+            this.buffers.paperInvoiceExit  = await loadBuffer('Sound/Paper_Invoice_Exit.mp3');
+            this.buffers.paperInvoiceFlip  = await loadBuffer('Sound/Paper_Invoice_Flip.mp3');
+            this.buffers.invoiceCardSave   = await loadBuffer('Sound/Invoice_Card_Sounds.mp3');
         } catch(e) {
             console.log("Failed to load Web Audio sound effects:", e);
         }
@@ -1512,6 +1521,10 @@ const gameState = {
         paperDaysSwap:           new Audio('Sound/Paper_DaysSwap.mp3'),
         paperExit:               new Audio('Sound/Paper_Exit.mp3'),
         paperTaskComplete:       new Audio('Sound/Paper_Task_Complete.mp3'),
+        paperInvoiceIntro:       new Audio('Sound/Paper_Invoice_Intro.mp3'),
+        paperInvoiceExit:        new Audio('Sound/Paper_Invoice_Exit.mp3'),
+        paperInvoiceFlip:        new Audio('Sound/Paper_Invoice_Flip.mp3'),
+        invoiceCardSave:         new Audio('Sound/Invoice_Card_Sounds.mp3'),
     },
     canvas: null,
     ctx: null,
@@ -1800,6 +1813,10 @@ gameState.sounds.paperSwipe.preload         = 'auto';
 gameState.sounds.paperDaysSwap.preload      = 'auto';
 gameState.sounds.paperExit.preload          = 'auto';
 gameState.sounds.paperTaskComplete.preload  = 'auto';
+gameState.sounds.paperInvoiceIntro.preload  = 'auto';
+gameState.sounds.paperInvoiceExit.preload   = 'auto';
+gameState.sounds.paperInvoiceFlip.preload   = 'auto';
+gameState.sounds.invoiceCardSave.preload    = 'auto';
 gameState.sounds.prayerCall.preload              = 'auto';
 gameState.sounds.inviteSent.preload              = 'auto';
 gameState.sounds.inviteAccepted.preload          = 'auto';
@@ -16908,9 +16925,9 @@ function drawBossResultsPanel(ctx, W, H, outcome) {
 // ============================================================================
 //  Personal Dashboard (لوحة المتابعة) — "paper stack" analytics + journal + to-dos
 //  ------------------------------------------------------------------------
-//  Restricted feature: the map entry-circle + UI are visible ONLY to the target
-//  user and Siraj test ghosts (dashboardAllowed). DATA TRACKING, however, runs
-//  for every real member (dashSaveSession / dashRecordGameOnce).
+//  Open to ALL users: the map entry-circle + UI show for everyone (dashboardAllowed
+//  now returns true). Each user reads/writes their OWN node. DATA TRACKING runs for
+//  every real member too (dashSaveSession / dashRecordGameOnce).
 //
 //  COST NOTE (Spark plan): dashboard data lives at the top-level `dashboards/{uid}`
 //  node, deliberately NOT under `users/`. The in-game `onValue('users')` listener
@@ -16957,7 +16974,7 @@ function _dashErr(where) {
     return (e) => console.warn(`[dashboard] ${where} write failed:`, e && (e.code || e.message || e));
 }
 
-function dashboardAllowed() { return gameState.userId === DASH_TARGET_UID || gameState.isSirajGhost; }
+function dashboardAllowed() { return true; }   // open to ALL users (was: owner UID + Siraj only)
 // Everyone — including a Siraj test ghost — reads/writes their OWN node. A Siraj ghost
 // builds its own throwaway dashboard data that is removed from Firebase on disconnect
 // (armed in setupDashboardUI), so it never inherits or pollutes the real owner's data.
@@ -17447,7 +17464,8 @@ function dashAlignGridLines() {
         // scores) are boxes, not writing — we deliberately leave them in natural flow so they
         // never overlap; the heading below re-snaps and absorbs any drift they introduce.
         const titles = [...content.querySelectorAll('.dash-section-title')];
-        align(content.querySelector('.dash-paper-date'), baseline);   // big day title on a line
+        // (date is NOT snapped — let it ride high near the top edge; snapping forced it down
+        // onto the first ruled line and wasted vertical space)
         if (titles[0]) align(titles[0], baseline);                    // ملخص عام
         if (titles[1]) align(titles[1], baseline);                    // يوميات اليوم
         // The journal has no ruled lines of its own anymore — it leans on the paper texture.
@@ -17619,6 +17637,10 @@ function setupDashboardUI() {
 
     const journal = document.getElementById('dash-journal');
     journal?.addEventListener('input', () => { dashClampJournal(journal); dashSaveJournal(); });
+    // Tapping the يوميات typebox while the to-do paper is in front swaps back to the main
+    // paper (the overlay click handler skips textareas, so handle it here on pointerdown —
+    // fires before focus so the swap happens, then the user can type normally).
+    journal?.addEventListener('pointerdown', () => { if (_dashState.side === 'todo') dashSetSide('main'); });
 
     // To-Do interactions (delegated). The checkbox toggles "done" and STOPS the click
     // from bubbling, so tapping a checkbox never triggers the paper side-swap.
@@ -17940,6 +17962,7 @@ function runSaveSequence() {
     if (!modal || !card || !body) return;
     _saveSeqRunning = true;
     clearTimeout(_saveBtnTimer);
+    gameState.focusAudioEngine?.playEffect('invoiceCardSave');   // حفظ pressed → save chime
 
     // Clip the overlay for the rest of the sequence: the top falls to +115vh and the
     // card leaves to -120vh — without clipping those off-screen transforms spawn a
@@ -17968,6 +17991,9 @@ function runSaveSequence() {
         card.classList.add('tearing');
         body.style.transition = 'transform 0.9s cubic-bezier(0.5, 0, 0.2, 1)';
         body.style.transform  = `translateY(${-topH / 2}px)`;
+        // the cut line fades out as the torn top piece starts dropping (no hard pop-off)
+        line.style.transition = 'opacity 0.4s ease';
+        line.style.opacity = '0';
     }, 470);
     setTimeout(() => { line.remove(); }, 1330);
     // Once it's off-screen, fully HIDE the fallen top piece — otherwise the final
@@ -18086,13 +18112,25 @@ let _invOpen = false;     // is the invoices view showing?
 let _invBusy = false;     // mid-animation guard (ignore re-clicks)
 let _invAnimTimer = null; // cleanup timer for the scatter/flip classes
 
+// Flip cascade pitch: each flipping card plays Paper_Invoice_Flip as its animation STARTS,
+// stepping UP in pitch (heavy first → fast last), off a per-reveal randomised base — same
+// house style as the UI cascade blip.
+let _invFlipBase = 0.72;
+let _invFlipCount = 0;    // index passed to the final peep→last flip
+function _invPlayFlip(idx) {
+    const fe = gameState.focusAudioEngine;
+    if (!fe) return;
+    const rate = _invFlipBase + Math.min(idx, 14) * 0.05;
+    if (!fe.playPitched('paperInvoiceFlip', rate, 0.7)) fe.playEffect('paperInvoiceFlip');
+}
+
 function dashOpenInvoices() {
     if (_invOpen || _invBusy || !_dashState.open) return;
     const ov = document.getElementById('dashboard-overlay');
     const view = document.getElementById('dash-invoice-view');
     if (!ov || !view) return;
     _invOpen = true; _invBusy = true;
-    dashSound('paperSwipe');
+    dashSound('paperInvoiceIntro');
     // Phase A — smoothly slide the dashboard + to-do away (anticipation easing) while
     // the clicked invoice glides to dead-centre and resets its rotation (CSS handles
     // both via the `.invoices-open` class).
@@ -18151,10 +18189,13 @@ function dashRunRevealSequence(vp) {
     const STAG = 78;
     const last = vp[vp.length - 1];
     const others = vp.slice(0, -1);
+    _invFlipBase = 0.70 + Math.random() * 0.12;   // fresh deep start for this cascade
+    _invFlipCount = others.length;                 // the peep→last flip is the highest pitch
     others.forEach((card, i) => setTimeout(() => {
         if (!_invOpen) return;
         card.classList.remove('inv-hidden');
         card.classList.add('inv-flipin');
+        _invPlayFlip(i);
     }, i * STAG));
     setTimeout(() => { if (_invOpen) dashPeepBecomeLast(peep, last); }, others.length * STAG + 40);
 }
@@ -18163,7 +18204,7 @@ function dashRunRevealSequence(vp) {
 // flips into its place — so the clickable invoice visually becomes that final card.
 function dashPeepBecomeLast(peep, lastCard) {
     if (!lastCard) return;
-    if (!peep) { lastCard.classList.remove('inv-hidden'); lastCard.classList.add('inv-flipin'); return; }
+    if (!peep) { lastCard.classList.remove('inv-hidden'); lastCard.classList.add('inv-flipin'); _invPlayFlip(_invFlipCount); return; }
     const pr = peep.getBoundingClientRect();
     const lr = lastCard.getBoundingClientRect();
     peep.style.setProperty('--tx', ((lr.left + lr.width / 2) - (pr.left + pr.width / 2)) + 'px');
@@ -18176,6 +18217,7 @@ function dashPeepBecomeLast(peep, lastCard) {
         // spin (0→1) so the handoff reads as exactly ONE flip, not two.
         lastCard.classList.remove('inv-hidden');
         lastCard.classList.add('inv-flipin-last');
+        _invPlayFlip(_invFlipCount);   // final flip = highest pitch in the sweep
     }, 300);
 }
 
@@ -18188,7 +18230,7 @@ function dashCloseInvoices(instant) {
     _invResetPeep();
     if (instant) { ov.classList.remove('invoices-open'); if (view) { view.classList.remove('show'); view.style.display = 'none'; } if (grid) grid.innerHTML = ''; _invBusy = false; return; }
     _invBusy = true;
-    dashSound('paperSwipe');
+    dashSound('paperInvoiceExit');
     _invPeepUnderDashboard();                  // keep the peep hidden under the returning dashboard
     ov.classList.remove('invoices-open');      // dashboard + to-do slide back in
     if (view) view.classList.remove('show');   // fade the grid out as the dashboard returns
