@@ -311,7 +311,7 @@ body {
     align-items: center;
     z-index: 2000;
     opacity: 0;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.4s ease;
 }
 
 .modal-overlay.active {
@@ -5681,7 +5681,7 @@ body.is-mobile .dash-todo-header { font-size: 21px; }
    Redesigned end-of-session card + image drop / 1:1 crop / taped-on photo
    ============================================================================ */
 .success-content {
-    max-width: 380px; padding: 28px 26px; text-align: center;
+    max-width: 300px; padding: 26px 22px; text-align: center;   /* a bit narrower, closer to a memory card */
 }
 /* Centered header (avatar on top), matching the original card. The text rules are
    scoped under .success-content so they beat the dark `.modal-content h3/p` colours. */
@@ -5782,6 +5782,104 @@ body.is-mobile .dash-todo-header { font-size: 21px; }
     text-decoration: underline; text-underline-offset: 3px;
 }
 .success-add-photo:hover { color: #fff; }
+
+/* ============================================================================
+   End-card appear / حفظ (save) sequence: slide-up appear → rip top off → recenter
+   → stamp (MdwnhLogo + star burst) → fly away. Card transforms during the sequence
+   are driven by inline styles in JS (after clearing this appear animation).
+   ============================================================================ */
+/* Appear: smooth, slow-ish slide-up + fade + slight rotation (overrides popInBouncy
+   for the success card only — higher specificity via the #id). */
+.modal-overlay.active #success-card {
+    animation: successAppear 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes successAppear {
+    0%   { opacity: 0; transform: translateY(72px) rotate(2.5deg); }
+    100% { opacity: 1; transform: translateY(0) rotate(0deg); }
+}
+
+/* overlay fade-out at the very end (keep it flexed while opacity animates → no snap) */
+#success-modal.success-fading { opacity: 0; }
+
+/* cut pieces — invisible at rest; the dashed rule is the seam */
+.success-cut-top { position: relative; }
+.success-cut-body { position: relative; }
+
+/* the cut line drawn left→right across the seam (the tear stroke) */
+.success-cut-line {
+    position: absolute; left: 0; right: 0; height: 3px; z-index: 20;
+    background: linear-gradient(90deg, rgba(140,40,30,0.95), rgba(210,70,55,0.95));
+    transform: scaleX(0); transform-origin: left center;
+    transition: transform 0.42s cubic-bezier(0.45, 0, 0.4, 1);
+    box-shadow: 0 0 7px rgba(0,0,0,0.25);
+}
+
+/* torn zigzag edges appear once the cut is made (white paper teeth vs the dark overlay) */
+.success-cut-top::after {
+    content: ''; position: absolute; left: -26px; right: -26px; bottom: -1px; height: 8px; z-index: 2;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='8' viewBox='0 0 14 8'><path d='M0 0H14L7 8Z' fill='%23ffffff'/></svg>") repeat-x top center;
+    background-size: 14px 8px; opacity: 0; transition: opacity 0.15s ease;
+}
+.success-cut-body::before {
+    content: ''; position: absolute; left: -26px; right: -26px; top: -1px; height: 8px; z-index: 2;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='8' viewBox='0 0 14 8'><path d='M0 8H14L7 0Z' fill='%23ffffff'/></svg>") repeat-x top center;
+    background-size: 14px 8px; opacity: 0; transition: opacity 0.15s ease;
+}
+#success-card.tearing .success-cut-top::after,
+#success-card.tearing .success-cut-body::before { opacity: 1; }
+
+/* once cut, the whole top piece FALLS off as ONE rigid block (its contents move together,
+   no scatter). Only AFTER it's gone does its space collapse so the body slides up — the
+   card never visibly "scales". */
+.success-cut-top { transition: max-height 0.4s ease, margin 0.4s ease; max-height: 400px; }
+#success-card.tearing .success-cut-top { animation: successTopFall 0.8s cubic-bezier(0.45, 0.05, 0.6, 1) forwards; }
+#success-card.cut-collapsed .success-cut-top { max-height: 0; margin: 0; overflow: hidden; }
+@keyframes successTopFall {
+    0%   { transform: translateY(0)   rotate(0deg);  opacity: 1; }
+    12%  { transform: translateY(7px) rotate(-2deg); opacity: 1; }    /* tips loose */
+    100% { transform: translateY(265px) rotate(9deg); opacity: 0; }   /* falls straight down */
+}
+
+/* حفظ — normal-sized button (flex:none so it doesn't stretch tall in the column);
+   slides in after the card, slides DOWN on save (stays in layout → no snap) */
+.success-save-btn {
+    flex: 0 0 auto; width: auto; align-self: center;
+    font-size: 15px; padding: 9px 32px; border-radius: 50px;
+    opacity: 0; transform: translateY(20px); pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.success-save-btn.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.success-save-btn.gone { opacity: 0; transform: translateY(36px); pointer-events: none; transition: opacity 0.34s ease, transform 0.44s cubic-bezier(0.5, 0, 0.7, 0.4); }
+
+/* The ink mark (logo PNG) sits bottom-left; the TOP-DOWN stamp (Stamp.svg) is bigger and
+   OPAQUE so it fully covers the mark — the mark only shows once the stamp slides away. */
+.success-stamp-imprint {
+    position: absolute; left: 16px; bottom: 16px; width: 80px; height: 80px; pointer-events: none;
+    object-fit: contain; opacity: 0; transition: opacity 0.2s ease; z-index: 5;
+}
+.success-stamp-imprint.show { opacity: 0.82; }   /* a bit transparent, becomes part of the invoice */
+.success-stamp {
+    position: absolute; left: 8px; bottom: 8px; width: 96px; height: 96px; pointer-events: none;
+    object-fit: contain; transform-origin: 50% 50%; opacity: 0; z-index: 30;
+}
+.success-stamp.run { animation: successStamp 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+@keyframes successStamp {
+    0%   { opacity: 0; transform: scale(1.3)  rotate(-5deg); }
+    18%  { opacity: 1; transform: scale(1.14) rotate(0deg); }   /* drop onto the spot */
+    36%  { opacity: 1; transform: scale(0.9)  rotate(0deg); }   /* press (impact) */
+    48%  { opacity: 1; transform: scale(1.0)  rotate(0deg); }   /* settle */
+    66%  { opacity: 1; transform: scale(1.0)  rotate(0deg); }   /* hold (cover the mark) */
+    100% { opacity: 0; transform: translate(84px, -78px) rotate(30deg) scale(1); } /* lift away → reveal */
+}
+
+/* star particles bursting from the stamp point */
+.success-star { position: absolute; z-index: 31; pointer-events: none; color: #f3c64b; font-size: 15px; line-height: 1; }
+.success-star.run { animation: successStarBurst 0.8s ease-out forwards; }
+@keyframes successStarBurst {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.2) rotate(0deg); }
+    18%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--tx, 0px)), calc(-50% + var(--ty, 0px))) scale(1) rotate(var(--rot, 180deg)); }
+}
 
 /* Crop modal (dark glass), sits above the success card */
 .crop-modal { z-index: 12000; }

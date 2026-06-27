@@ -67,7 +67,7 @@
 
     <!-- زر وضع التجربة — ثابت في أسفل الشاشة، يظهر في كل شاشات الدخول -->
     <button id="siraj-test-link" class="siraj-test-link">وضع التجربة</button>
-    <div id="build-number" class="build-number">Build 172 · Updated 10:12 AM</div>
+    <div id="build-number" class="build-number">Build 173 · Updated 3:29 PM</div>
 
     <!-- شاشة الترحيب: للمستخدمين المسجلين عبر ديسكورد -->
     <div id="discord-welcome-screen" class="screen">
@@ -663,48 +663,55 @@
         <!-- نافذة الإنجاز (أحسنتم) -->
         <div id="success-modal" class="modal-overlay">
             <div class="modal-content success-content success-receipt" id="success-card">
-                <div class="success-head">
-                    <div id="success-avatar" class="success-avatar">
-                        <img id="success-avatar-img" src="" alt="">
-                        <div id="success-avatar-text"></div>
+                <!-- top piece: ripped off (above the dashed line) when saving -->
+                <div class="success-cut-top" id="success-cut-top">
+                    <div class="success-head">
+                        <div id="success-avatar" class="success-avatar">
+                            <img id="success-avatar-img" src="" alt="">
+                            <div id="success-avatar-text"></div>
+                        </div>
+                        <h2 id="success-name" class="success-name">-</h2>
+                        <h1 class="success-title">أحسنتم!</h1>
+                        <h3 class="success-sub">جزيتم خيرًا</h3>
                     </div>
-                    <h2 id="success-name" class="success-name">-</h2>
-                    <h1 class="success-title">أحسنتم!</h1>
-                    <h3 class="success-sub">جزيتم خيرًا</h3>
                 </div>
 
-                <div class="success-rule"></div>
+                <!-- body: the part that stays, gets stamped, then flies away -->
+                <div class="success-cut-body" id="success-cut-body">
+                    <div class="success-rule"></div>
 
-                <!-- صورة الجلسة (اسحب وأفلت / انقر) مع تأثير الشريط اللاصق -->
-                <div id="success-photo-wrap" class="success-photo-wrap">
-                    <button type="button" id="success-photo-remove" class="success-photo-remove"
-                        aria-label="إزالة الصورة">✕</button>
-                    <button type="button" id="success-photo-drop" class="success-photo-drop">
-                        <span class="success-photo-icon">📷</span>
-                        <span class="success-photo-text">اسحب صورة هنا أو انقر</span>
-                    </button>
-                    <div id="success-photo-taped" class="success-photo-taped" style="display:none;">
-                        <div class="success-photo-inner"><img id="success-photo-img" src="" alt=""></div>
+                    <!-- صورة الجلسة (اسحب وأفلت / انقر) مع تأثير الشريط اللاصق -->
+                    <div id="success-photo-wrap" class="success-photo-wrap">
+                        <button type="button" id="success-photo-remove" class="success-photo-remove"
+                            aria-label="إزالة الصورة">✕</button>
+                        <button type="button" id="success-photo-drop" class="success-photo-drop">
+                            <span class="success-photo-icon">📷</span>
+                            <span class="success-photo-text">اسحب صورة هنا أو انقر</span>
+                        </button>
+                        <div id="success-photo-taped" class="success-photo-taped" style="display:none;">
+                            <div class="success-photo-inner"><img id="success-photo-img" src="" alt=""></div>
+                        </div>
+                        <input type="file" id="success-photo-input" accept="image/*" hidden>
                     </div>
-                    <input type="file" id="success-photo-input" accept="image/*" hidden>
-                </div>
 
-                <div class="success-stats">
-                    <div class="success-stats-label">إجمالي وقت العمل</div>
-                    <div id="success-total-time" class="success-stats-value">0 دقيقة</div>
-                    <div class="success-stats-sub"><span id="success-sessions-count">0</span> جلسات</div>
-                </div>
-                <div id="success-task" class="success-task" style="display: none;"></div>
+                    <div class="success-stats">
+                        <div class="success-stats-label">إجمالي وقت العمل</div>
+                        <div id="success-total-time" class="success-stats-value">0 دقيقة</div>
+                        <div class="success-stats-sub"><span id="success-sessions-count">0</span> جلسات</div>
+                    </div>
+                    <div id="success-task" class="success-task" style="display: none;"></div>
 
-                <p class="success-note">قم بالتقاط الشاشة وإرسالها في التوثيق</p>
+                    <p class="success-note">قم بالتقاط الشاشة وإرسالها في التوثيق</p>
 
-                <button id="success-close" class="btn-primary success-close-btn">إغلاق</button>
-
-                <div class="success-barcode" aria-hidden="true">
-                    <div class="success-barcode-bars"></div>
-                    <div class="success-barcode-num" id="success-barcode-num">MDWNH · 1445</div>
+                    <div class="success-barcode" aria-hidden="true">
+                        <div class="success-barcode-bars"></div>
+                        <div class="success-barcode-num" id="success-barcode-num">MDWNH · 1445</div>
+                    </div>
                 </div>
             </div>
+            <!-- save (outside the invoice) — slides in after the card; then triggers the
+                 rip + stamp + fly-away sequence -->
+            <button type="button" id="success-save" class="btn-primary success-save-btn">حفظ</button>
             <button type="button" id="success-add-photo" class="success-add-photo" style="display:none;">اضافة صورة</button>
         </div>
 
@@ -1240,7 +1247,7 @@
 
         <!-- البرمجيات -->
         <script type="module" src="firebase-config.js"></script>
-        <script type="module" src="game.js"></script>
+        <script type="module" src="game.js?v=173"></script>
 </body>
 
 </html>

@@ -5625,6 +5625,8 @@ function showSuccessModal(totalSessions, workDuration, taskText = '') {
     _pendingInvoice = { mode: 'pomodoro', minutes: totalMins, task: (taskText || '').trim(), finishMs: Date.now() };
     document.getElementById('success-total-time').textContent = formatDurationArabic(totalMins);
     document.getElementById('success-sessions-count').textContent = totalSessions;
+    const _sessRow = document.getElementById('success-sessions-count')?.parentElement;
+    if (_sessRow) _sessRow.style.display = '';   // pomodoro shows the sessions count (free mode hides it)
     const taskEl = document.getElementById('success-task');
     if (taskEl) {
         const cleanTask = taskText.trim();
@@ -5651,11 +5653,7 @@ function showSuccessModal(totalSessions, workDuration, taskText = '') {
     }
 
     modal.classList.add('active');
-
-    const closeBtn = document.getElementById('success-close');
-    closeBtn.onclick = () => {
-        modal.classList.remove('active');
-    };
+    _successCardOnShow();
 
     if (gameState.focusAudioEngine) {
         gameState.focusAudioEngine.playEffect('yipee');
@@ -9753,7 +9751,7 @@ function drawPlayers(onlyLocal = false) {
             ctx.font = 'bold 24px Rubik';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(player.username.charAt(0).toUpperCase(), 0, 0);
+            ctx.fillText((player.username || '?').charAt(0).toUpperCase(), 0, 0);
         }
         ctx.restore();
 
@@ -12652,11 +12650,7 @@ function showFreeModeSuccessModal(totalMins, taskText = '') {
     }
 
     modal.classList.add('active');
-    document.getElementById('success-close').onclick = () => {
-        modal.classList.remove('active');
-        if (sessRow) sessRow.style.display = '';
-        if (taskEl) taskEl.style.display = 'none';
-    };
+    _successCardOnShow();
 
     if (gameState.focusAudioEngine) {
         gameState.focusAudioEngine.playEffect('yipee');
@@ -17886,8 +17880,125 @@ function setupSuccessCardUI() {
         zoom.value = z; _crop.scale = _crop.baseScale * z; _cropClamp(); _cropApply();
     }, { passive: false });
 
-    // On close, archive this session as an "invoice" (stats + optional photo) to Firebase.
-    document.getElementById('success-close')?.addEventListener('click', saveInvoice);
+    // حفظ runs the save sequence (archives to Firebase, then rip + stamp + fly away).
+    document.getElementById('success-save')?.addEventListener('click', runSaveSequence);
+}
+
+// ── End-card appear + حفظ (save) sequence ───────────────────────────────────
+let _saveSeqRunning = false;
+let _saveBtnTimer = null;
+
+// Called each time the card opens: clear any leftover sequence state and slide the
+// حفظ button in once the card's appear animation has settled.
+function _successCardOnShow() {
+    const card = document.getElementById('success-card');
+    const top = document.getElementById('success-cut-top');
+    const saveBtn = document.getElementById('success-save');
+    const modal = document.getElementById('success-modal');
+    if (!card) return;
+    _saveSeqRunning = false;
+    card.classList.remove('tearing', 'cut-collapsed');
+    modal?.classList.remove('success-fading');
+    // Force the dark overlay to FADE in (display+opacity flip in one frame otherwise
+    // snaps to full dark). Start transparent, then ease to full next frames.
+    if (modal) {
+        modal.style.opacity = '0';
+        requestAnimationFrame(() => requestAnimationFrame(() => { modal.style.opacity = ''; }));
+    }
+    card.querySelectorAll('.success-cut-line').forEach(n => n.remove());
+    card.style.cssText = '';        // drop the inline animation/transform from a prior sequence
+    if (top) top.style.cssText = '';
+    card.querySelectorAll('.success-stamp, .success-stamp-imprint, .success-star').forEach(n => n.remove());
+    // (the "اضافة صورة" button visibility is managed by clearSuccessPhoto on open)
+    if (saveBtn) {
+        saveBtn.style.display = '';
+        saveBtn.classList.remove('show', 'gone');
+        clearTimeout(_saveBtnTimer);
+        _saveBtnTimer = setTimeout(() => saveBtn.classList.add('show'), 840);   // after appear settles
+    }
+}
+
+function runSaveSequence() {
+    if (_saveSeqRunning) return;
+    const modal = document.getElementById('success-modal');
+    const card  = document.getElementById('success-card');
+    const body  = document.getElementById('success-cut-body');
+    const saveBtn = document.getElementById('success-save');
+    const addBtn  = document.getElementById('success-add-photo');
+    if (!modal || !card || !body) return;
+    _saveSeqRunning = true;
+    clearTimeout(_saveBtnTimer);
+
+    saveInvoice();   // persist BEFORE tearing the card apart (reads the photo from the DOM)
+
+    if (saveBtn) { saveBtn.classList.remove('show'); saveBtn.classList.add('gone'); }   // slide down (stays in layout → no snap)
+    if (addBtn) addBtn.style.display = 'none';
+
+    card.style.animation = 'none';   // freeze the appear animation so we drive transforms
+
+    // 1) a cut line is drawn left→right across the dashed line (the tear).
+    const line = document.createElement('div');
+    line.className = 'success-cut-line';
+    line.style.top = body.offsetTop + 'px';
+    card.appendChild(line);
+    requestAnimationFrame(() => { line.style.transform = 'scaleX(1)'; });
+    // 2) once cut, the whole top piece falls off; 3) ONLY after it's gone does its space
+    //    collapse so the body slides up to centre (no scaling, no scatter).
+    setTimeout(() => card.classList.add('tearing'), 470);
+    setTimeout(() => { line.remove(); card.classList.add('cut-collapsed'); }, 1330);
+    // 4) stamp; 5) hold so it can be read; 6) fly away while the overlay fades together.
+    setTimeout(() => {
+        _successRunStamp(body, () => {
+            setTimeout(() => {
+                card.style.transition = 'transform 0.65s cubic-bezier(0.5,0,0.7,0.4), opacity 0.6s ease';
+                card.style.transform = 'translateY(-150px) rotate(-5deg)';
+                card.style.opacity = '0';
+                modal.classList.add('success-fading');   // overlay fades WITH the card (no dark peak)
+                setTimeout(() => { modal.classList.remove('active', 'success-fading'); _saveSeqRunning = false; }, 640);
+            }, 1300);   // give time to look at the stamped invoice
+        });
+    }, 1650);
+}
+
+// A wooden stamp tool (Stamp.svg) descends + presses the bottom-left; on impact it
+// leaves the logo ink mark (the PNG), bursts stars, then lifts and slides away.
+const STAMP_LOGO = 'مدونة ستوديو - شعار ختم.png';
+function _successRunStamp(body, done) {
+    if (!body) { done && done(); return; }
+    const imprint = document.createElement('img');
+    imprint.src = STAMP_LOGO; imprint.alt = ''; imprint.className = 'success-stamp-imprint';
+    body.appendChild(imprint);
+    const stamp = document.createElement('img');
+    stamp.src = 'Stamp.svg'; stamp.alt = ''; stamp.className = 'success-stamp';
+    body.appendChild(stamp);
+    requestAnimationFrame(() => stamp.classList.add('run'));
+    setTimeout(() => {                       // impact: ink mark sets in + stars burst
+        imprint.classList.add('show');
+        _successSpawnStars(body);
+    }, 580);
+    setTimeout(() => { stamp.remove(); done && done(); }, 1500);
+}
+
+// Star particles bursting from the stamp point (bottom-left of the invoice).
+function _successSpawnStars(body) {
+    const cxL = 16 + 43, cyB = 16 + 43;   // centre of the 86px stamp box at left:16 bottom:16
+    const N = 14;
+    for (let i = 0; i < N; i++) {
+        const s = document.createElement('span');
+        s.className = 'success-star';
+        s.textContent = '✦';
+        s.style.left = cxL + 'px';
+        s.style.bottom = cyB + 'px';
+        const ang = (Math.PI * 2 * i / N) + Math.random() * 0.5;
+        const dist = 38 + Math.random() * 56;
+        s.style.setProperty('--tx', (Math.cos(ang) * dist).toFixed(1) + 'px');
+        s.style.setProperty('--ty', (Math.sin(ang) * dist).toFixed(1) + 'px');
+        s.style.setProperty('--rot', Math.floor(Math.random() * 360) + 'deg');
+        s.style.fontSize = (11 + Math.random() * 8).toFixed(1) + 'px';
+        body.appendChild(s);
+        requestAnimationFrame(() => s.classList.add('run'));
+        setTimeout(() => s.remove(), 860);
+    }
 }
 
 // ── Invoice archive: save each end-card (stats + optional photo) to Firebase ──

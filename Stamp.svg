@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- TOP-DOWN wooden stamp: an opaque round disc seen from above (covers the logo
+       beneath it; the logo only shows once this slides away). -->
+  <defs>
+    <radialGradient id="sWood" cx="42%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#e0a861"/>
+      <stop offset="0.55" stop-color="#bd803c"/>
+      <stop offset="1" stop-color="#8a531f"/>
+    </radialGradient>
+    <radialGradient id="sKnob" cx="42%" cy="36%" r="65%">
+      <stop offset="0" stop-color="#f1c889"/>
+      <stop offset="1" stop-color="#b9803f"/>
+    </radialGradient>
+  </defs>
+  <!-- outer wooden disc -->
+  <circle cx="60" cy="60" r="58" fill="url(#sWood)" stroke="#6e431a" stroke-width="3"/>
+  <circle cx="60" cy="60" r="50" fill="none" stroke="#7a4c1c" stroke-width="2" opacity="0.5"/>
+  <!-- wood grain rings -->
+  <g fill="none" stroke="#6b421b" stroke-width="2" opacity="0.3">
+    <circle cx="60" cy="60" r="40"/>
+    <circle cx="60" cy="60" r="30"/>
+  </g>
+  <!-- centre handle knob (top-down) -->
+  <circle cx="60" cy="60" r="22" fill="url(#sKnob)" stroke="#7a4c1c" stroke-width="2"/>
+  <circle cx="53" cy="53" r="7" fill="#f3d3a0" opacity="0.7"/>
+</svg>
