@@ -8,6 +8,11 @@
     <link rel="icon" type="image/png" sizes="128x128" href="favicon-128.png">
     <link rel="icon" type="image/png" sizes="any" href="favicon-128.png">
     <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0d0d0d">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="مدونة ستوديو">
     <link rel="stylesheet" href="style.css">
     <!-- JUICE EXPERIMENT: arcade-feel UI animations. Remove this one line to revert. -->
     <link rel="stylesheet" href="juice.css">
@@ -67,7 +72,7 @@
 
     <!-- زر وضع التجربة — ثابت في أسفل الشاشة، يظهر في كل شاشات الدخول -->
     <button id="siraj-test-link" class="siraj-test-link">وضع التجربة</button>
-    <div id="build-number" class="build-number">Build 177 · Updated 7:03 PM</div>
+    <div id="build-number" class="build-number">Build 178 · Updated 2:46 PM</div>
 
     <!-- شاشة الترحيب: للمستخدمين المسجلين عبر ديسكورد -->
     <div id="discord-welcome-screen" class="screen">
@@ -1257,6 +1262,79 @@
         <!-- البرمجيات -->
         <script type="module" src="firebase-config.js"></script>
         <script type="module" src="game.js?v=173"></script>
+
+    <!-- زر تثبيت التطبيق (PWA) — يظهر في شاشات الدخول فقط -->
+    <button id="pwa-install-btn" type="button" aria-label="أضف للشاشة الرئيسية">
+        <span>أضف للشاشة الرئيسية</span>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 2v8M5 7l3 3 3-3"/>
+            <path d="M2 11v1a2 2 0 002 2h8a2 2 0 002-2v-1"/>
+        </svg>
+    </button>
+    <div id="pwa-toast" role="status" aria-live="polite"></div>
+
+    <script>
+    (function () {
+        // Already installed as a PWA — skip entirely
+        if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true) return;
+
+        var ua = navigator.userAgent;
+        var isIos       = /iphone|ipad|ipod/i.test(ua) && !window.MSStream;
+        var isSafari    = /^((?!chrome|android).)*safari/i.test(ua);
+        var isMacSafari = isSafari && !isIos;
+
+        var btn   = document.getElementById('pwa-install-btn');
+        var toast = document.getElementById('pwa-toast');
+        var deferredPrompt = null;
+        var toastTimer     = null;
+
+        // Register service worker (unlocks beforeinstallprompt on Chrome/Edge/Android)
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('./sw.js').catch(function () {});
+            });
+        }
+
+        // Chrome / Edge / Android Chrome — capture the native install prompt
+        window.addEventListener('beforeinstallprompt', function (e) {
+            e.preventDefault();
+            deferredPrompt = e;
+            showBtn();
+        });
+
+        // iOS Safari & macOS Safari — no beforeinstallprompt, show manual instructions
+        if (isIos || isMacSafari) showBtn();
+
+        function showBtn() { if (btn) btn.style.display = 'flex'; }
+        function hideBtn() { if (btn) btn.style.display = 'none'; }
+
+        if (!btn) return;
+
+        btn.addEventListener('click', async function () {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                var result = await deferredPrompt.userChoice;
+                deferredPrompt = null;
+                if (result.outcome === 'accepted') hideBtn();
+            } else if (isIos) {
+                showToast('اضغط على زر المشاركة 📤 ثم اختر "أضف إلى الشاشة الرئيسية"');
+            } else if (isMacSafari) {
+                showToast('File → Add to Dock');
+            }
+        });
+
+        function showToast(msg) {
+            if (!toast) return;
+            toast.textContent = msg;
+            toast.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 4500);
+        }
+
+        // Hide once the game starts (dispatched from game.js)
+        window.addEventListener('pwa:gameStarted', hideBtn);
+    })();
+    </script>
 </body>
 
 </html>

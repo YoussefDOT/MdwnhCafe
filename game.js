@@ -3465,6 +3465,7 @@ function startGame(userData) {
     document.getElementById('login-screen').classList.remove('active');
     document.getElementById('game-screen').classList.add('active');
     document.body.classList.add('game-ready');
+    window.dispatchEvent(new CustomEvent('pwa:gameStarted'));
     document.getElementById('current-user').textContent = userData.username;
     document.getElementById('channel-name').textContent = userData.channelName || 'قناة غير معروفة';
     gameState.canvas = document.getElementById('game-canvas');

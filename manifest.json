@@ -1,0 +1,24 @@
+{
+  "name": "مدونة ستوديو | مساحة العمل الرقمية",
+  "short_name": "مدونة ستوديو",
+  "description": "مساحة العمل الرقمية التعاونية",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "favicon-128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

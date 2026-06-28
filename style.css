@@ -6156,3 +6156,67 @@ body.is-mobile .dash-invoice-grid { grid-template-columns: repeat(auto-fill, 150
 body.is-mobile .inv-peep { width: 150px; }
 body.is-mobile .dash-stage.side-main .inv-peep { transform: translate(calc(-50% - 165px), -50%) rotate(-5deg); }
 body.is-mobile .dash-stage.side-todo .inv-peep { transform: translate(calc(-50% - 330px), -50%) rotate(-5deg); }
+
+/* ─── PWA Install Button ─────────────────────────────────────────────────── */
+#pwa-install-btn {
+    display: none; /* shown by JS when installable */
+    position: fixed;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    align-items: center;
+    gap: 7px;
+    padding: 9px 20px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 50px;
+    color: rgba(255,255,255,0.38);
+    font-family: var(--font-main);
+    font-size: 0.81rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    z-index: 9999;
+    white-space: nowrap;
+    direction: rtl;
+}
+#pwa-install-btn:hover {
+    background: rgba(255,255,255,0.09);
+    color: rgba(255,255,255,0.70);
+    border-color: rgba(255,255,255,0.20);
+}
+#pwa-install-btn:active { transform: translateX(-50%) scale(0.96); }
+#pwa-install-btn svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+/* PWA Install Toast (manual instructions for iOS / macOS Safari) */
+#pwa-toast {
+    position: fixed;
+    bottom: 72px;
+    left: 50%;
+    transform: translateX(-50%) translateY(6px);
+    background: rgba(18,18,18,0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.09);
+    color: rgba(255,255,255,0.78);
+    padding: 11px 18px;
+    border-radius: 14px;
+    font-family: var(--font-main);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    text-align: center;
+    max-width: 300px;
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 10000;
+    pointer-events: none;
+    direction: rtl;
+}
+#pwa-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
