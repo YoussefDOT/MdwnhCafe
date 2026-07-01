@@ -72,7 +72,7 @@
 
     <!-- زر وضع التجربة — ثابت في أسفل الشاشة، يظهر في كل شاشات الدخول -->
     <button id="siraj-test-link" class="siraj-test-link">وضع التجربة</button>
-    <div id="build-number" class="build-number">Build 179 · Updated 3:02 PM</div>
+    <div id="build-number" class="build-number">Build 180 · Updated 2:15 PM</div>
 
     <!-- شاشة الترحيب: للمستخدمين المسجلين عبر ديسكورد -->
     <div id="discord-welcome-screen" class="screen">
@@ -718,6 +718,14 @@
                  rip + stamp + fly-away sequence -->
             <button type="button" id="success-save" class="btn-primary success-save-btn">حفظ</button>
             <button type="button" id="success-add-photo" class="success-add-photo" style="display:none;">اضافة صورة</button>
+            <div id="success-discard-wrap" class="success-discard-wrap">
+                <button type="button" id="success-discard" class="success-discard-link">تجاهل الجلسة</button>
+                <span id="success-discard-confirm" class="success-discard-confirm" style="display:none;">
+                    <span>تجاهل الجلسة نهائيًا؟</span>
+                    <button type="button" id="success-discard-yes">تجاهل</button>
+                    <button type="button" id="success-discard-no">إلغاء</button>
+                </span>
+            </div>
         </div>
 
         <!-- نافذة قص الصورة (نسبة 1:1) -->
@@ -963,6 +971,8 @@
                 <button id="yt-load-btn">تحميل</button>
             </div>
             <div id="mini-yt-player" class="mini-yt-player">
+                <!-- يمسح الفيديو الحالي ويزيله من الحفظ -->
+                <button type="button" id="yt-clear-btn" class="yt-clear-btn" title="إزالة الفيديو" aria-label="إزالة الفيديو">✕</button>
                 <!-- Ad overlay — shown when a pre-roll ad is detected -->
                 <div id="yt-ad-overlay" class="yt-ad-overlay">
                     <div class="yt-ad-spinner"></div>
@@ -1265,11 +1275,13 @@
 
     <!-- زر تثبيت التطبيق (PWA) — يظهر في شاشات الدخول فقط -->
     <button id="pwa-install-btn" type="button" aria-label="أضف للشاشة الرئيسية">
-        <span>أضف للشاشة الرئيسية</span>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 2v8M5 7l3 3 3-3"/>
-            <path d="M2 11v1a2 2 0 002 2h8a2 2 0 002-2v-1"/>
-        </svg>
+        <span class="pwa-icon-badge">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8 2v8M5 7l3 3 3-3"/>
+                <path d="M2 11v1a2 2 0 002 2h8a2 2 0 002-2v-1"/>
+            </svg>
+        </span>
+        <span>أضف إلى الشاشة الرئيسية</span>
     </button>
     <div id="pwa-toast" role="status" aria-live="polite"></div>
 
@@ -1282,11 +1294,14 @@
         var isIos       = /iphone|ipad|ipod/i.test(ua) && !window.MSStream;
         var isSafari    = /^((?!chrome|android).)*safari/i.test(ua);
         var isMacSafari = isSafari && !isIos;
+        var isAndroid   = /android/i.test(ua);
+        var isFirefox   = /firefox/i.test(ua);
 
         var btn   = document.getElementById('pwa-install-btn');
         var toast = document.getElementById('pwa-toast');
         var deferredPrompt = null;
         var toastTimer     = null;
+        var screenObserver = null;
 
         // Register service worker (unlocks beforeinstallprompt on Chrome/Edge/Android)
         if ('serviceWorker' in navigator) {
@@ -1295,36 +1310,80 @@
             });
         }
 
-        // Chrome / Edge / Android Chrome — capture the native install prompt
+        // Chrome / Edge / Android Chrome — capture the native install prompt when it fires
         window.addEventListener('beforeinstallprompt', function (e) {
             e.preventDefault();
             deferredPrompt = e;
-            showBtn();
         });
-
-        // iOS Safari & macOS Safari — no beforeinstallprompt, show manual instructions
-        if (isIos || isMacSafari) showBtn();
-
-        function showBtn() { if (btn) btn.style.display = 'flex'; }
-        function hideBtn() { if (btn) btn.style.display = 'none'; }
 
         if (!btn) return;
 
+        // Always show on every login screen, on every browser, unless already installed
+        // (checked above). Clicking it uses the native prompt when available, otherwise
+        // falls back to per-browser manual instructions.
+        showBtn();
+
+        function showBtn() {
+            btn.style.display = 'flex';
+            positionBtn();
+            if (!screenObserver) {
+                // Reposition only on real layout changes (screen switch / resize) —
+                // NOT on a per-frame rAF loop. That loop used to overwrite left/top/
+                // transform ~60x/sec, fighting the page's own transitions and clicks
+                // and reading as constant jank/lag across the whole login screen.
+                screenObserver = new MutationObserver(positionBtn);
+                document.querySelectorAll('.screen').forEach(function (s) {
+                    screenObserver.observe(s, { attributes: true, attributeFilter: ['class'] });
+                });
+                window.addEventListener('resize', positionBtn);
+                // The panel itself animates in (loginCardEnter, translateY 32px→0) —
+                // catch it settling so the button doesn't freeze at its mid-animation
+                // (off-by-~20px) position.
+                document.addEventListener('animationend', function (e) {
+                    if (e.target.classList && (e.target.classList.contains('login-container') || e.target.classList.contains('lobby-container'))) positionBtn();
+                }, true);
+            }
+        }
+        function hideBtn() {
+            btn.style.display = 'none';
+            if (screenObserver) { screenObserver.disconnect(); screenObserver = null; }
+        }
+        // Anchors the button just under whichever login/lobby panel is currently visible
+        function positionBtn() {
+            var panel = document.querySelector('.screen.active .login-container, .screen.active .lobby-container');
+            if (!panel) return;
+            var r = panel.getBoundingClientRect();
+            var top = Math.min(r.bottom + 18, window.innerHeight - 56);
+            btn.style.left = (r.left + r.width / 2) + 'px';
+            btn.style.top = top + 'px';
+            btn.style.transform = 'translateX(-50%)';
+        }
+
         btn.addEventListener('click', async function () {
             if (deferredPrompt) {
-                deferredPrompt.prompt();
-                var result = await deferredPrompt.userChoice;
+                var dp = deferredPrompt;
                 deferredPrompt = null;
+                dp.prompt();
+                var result = await dp.userChoice;
                 if (result.outcome === 'accepted') hideBtn();
             } else if (isIos) {
                 showToast('اضغط على زر المشاركة 📤 ثم اختر "أضف إلى الشاشة الرئيسية"');
             } else if (isMacSafari) {
-                showToast('File → Add to Dock');
+                showToast('من قائمة File اختر Add to Dock');
+            } else if (isAndroid) {
+                showToast('افتح قائمة المتصفح ⋮ ثم اختر "إضافة إلى الشاشة الرئيسية"');
+            } else if (isFirefox) {
+                showToast('فايرفوكس لا يدعم تثبيت التطبيقات مباشرة — جرّب Chrome أو Edge');
+            } else {
+                showToast('افتح قائمة المتصفح واختر "تثبيت التطبيق"');
             }
         });
 
         function showToast(msg) {
             if (!toast) return;
+            var r = btn.getBoundingClientRect();
+            toast.style.left = (r.left + r.width / 2) + 'px';
+            toast.style.top  = Math.min(r.bottom + 12, window.innerHeight - 60) + 'px';
             toast.textContent = msg;
             toast.classList.add('show');
             clearTimeout(toastTimer);

@@ -73,6 +73,33 @@ function setMobileClass() {
     document.body.classList.toggle('is-mobile', isMobile());
     applyGraphicsBodyClass();
     updateJoystickVisibility();
+    syncFocusDrawerParenting();
+}
+
+// The prayer panel + YT player physically move INSIDE the focus-sounds-panel
+// drawer on mobile (so they scroll with it) and back OUT to being plain fixed
+// siblings of #game-screen on desktop (their CSS assumes viewport-fixed there).
+// This used to run once at game start only, gated on the startup isMobile()
+// value — so a device that changed mode mid-session (a browser window resized
+// below 1024px, or a tablet rotating past that width) never re-parented them:
+// the CSS for the new mode applied, but the DOM was still shaped for the old
+// mode, producing the "panel jumps to a random spot" bug. Called from
+// setMobileClass() so every resize/rotation keeps DOM and CSS in sync.
+function syncFocusDrawerParenting() {
+    const gameScreen = document.getElementById('game-screen');
+    const drawer = document.getElementById('focus-sounds-panel');
+    const yt = document.getElementById('yt-focus-block');
+    const pp = document.getElementById('prayer-panel');
+    if (!gameScreen || !drawer || !yt || !pp) return;
+    const wantInDrawer = isMobile();
+    const isInDrawer = pp.parentElement === drawer;
+    if (wantInDrawer && !isInDrawer) {
+        drawer.appendChild(pp);
+        drawer.appendChild(yt);
+    } else if (!wantInDrawer && isInDrawer) {
+        gameScreen.appendChild(pp);
+        gameScreen.appendChild(yt);
+    }
 }
 
 // Mirror the graphics tier onto the <body> so the CSS perf wins (drop live
@@ -150,6 +177,36 @@ const DISCORD_SESSION_KEY = 'mdwnh_discord_session';
 // Chrome discarding the tab when the user switches apps) instead of dumping them
 // back on the lobby/welcome screen.
 const ACTIVE_SESSION_KEY = 'mdwnh_active_session';
+
+// Persists just enough to reopen the end-of-session card (حفظ not yet pressed) if
+// the tab reloads while it's open — e.g. a weak phone getting killed for memory
+// when the user backgrounds it to take a photo for the invoice. The photo itself
+// isn't preserved (it only ever lived in the DOM), just the card's stats, so the
+// user lands back on the same card and can re-attach a photo and press حفظ.
+// Cleared the moment the card is saved or discarded, and on explicit logout.
+const PENDING_ENDCARD_KEY = 'mdwnh_pending_endcard';
+const PENDING_ENDCARD_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour — otherwise treat as stale
+function persistPendingEndCard(data) {
+    if (gameState.isSirajGhost) return;   // ephemeral test ghosts never need this
+    try { localStorage.setItem(PENDING_ENDCARD_KEY, JSON.stringify({ userId: gameState.userId, savedAt: Date.now(), ...data })); } catch (_) {}
+}
+function clearPendingEndCard() {
+    try { localStorage.removeItem(PENDING_ENDCARD_KEY); } catch (_) {}
+}
+// Reopens the end card on login if one was left open for this exact user, and
+// isn't stale. Returns true if it reopened the card (caller can skip anything
+// that'd otherwise conflict with it).
+function restorePendingEndCardIfAny() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(PENDING_ENDCARD_KEY) || 'null'); } catch (_) { saved = null; }
+    if (!saved || saved.userId !== gameState.userId) return false;
+    if (Date.now() - saved.savedAt > PENDING_ENDCARD_MAX_AGE_MS) { clearPendingEndCard(); return false; }
+    setTimeout(() => {
+        if (saved.kind === 'free') showFreeModeSuccessModal(saved.totalMins, saved.taskText);
+        else showSuccessModal(saved.totalSessions, saved.workDuration, saved.taskText);
+    }, 400);
+    return true;
+}
 
 // Returns the exact redirect URI registered for the current host.
 // Discord matches strictly so we hardcode known-good values.
@@ -1476,6 +1533,23 @@ class FocusYouTubePlayer {
             if (cover) cover.src = src;
             if (ambient) ambient.src = src;
         }
+    }
+
+    // Clears the current video: stops playback, hides the mini player, wipes the
+    // saved URL input, and removes the saved profile from Firebase.
+    async clear() {
+        if (this.player) { try { this.player.stopVideo(); } catch(e) {} }
+        this._stopPoll();
+        this._stopWaveAnim();
+        this.videoId = null;
+        this.url = null;
+        this._isAdPlaying = false;
+        const adOverlay = document.getElementById('yt-ad-overlay');
+        if (adOverlay) adOverlay.classList.remove('active');
+        this._ensureUiVisible(false);
+        const input = document.getElementById('yt-url-input');
+        if (input) input.value = '';
+        if (gameState.userId) update(ref(database), { [`users/${gameState.userId}/focusPlayer`]: null });
     }
 
     async loadFromProfile(profile) {
@@ -3746,6 +3820,11 @@ function startGame(userData) {
             // fade if we restored into an active session (seamless), otherwise the
             // full cinematic entrance — including on a refresh while NOT in a session.
             beginEntrance(gameState.pomodoro.active || gameState.freeMode.active);
+
+            // If a reload killed the tab while the end-of-session card was still open
+            // (e.g. a weak phone freeing memory when the user went to take a photo),
+            // reopen the same card so they land right back where they left off.
+            restorePendingEndCardIfAny();
         });
     });
 
@@ -4492,6 +4571,9 @@ function setupFocusPanelUI() {
     }
     if (miniBack) miniBack.addEventListener('click', () => { gameState.focusYTPlayer?.back(10); });
     if (miniForward) miniForward.addEventListener('click', () => { gameState.focusYTPlayer?.forward(10); });
+
+    const ytClearBtn = document.getElementById('yt-clear-btn');
+    if (ytClearBtn) ytClearBtn.addEventListener('click', () => { gameState.focusYTPlayer?.clear(); });
     // Waveform scrub — use direct mouse position to avoid range-input thumb-offset bugs
     const waveWrap = document.getElementById('yt-wave-wrap');
     if (waveWrap) {
@@ -5682,6 +5764,7 @@ function showSuccessModal(totalSessions, workDuration, taskText = '') {
 
     const totalMins = Math.floor(totalSessions * workDuration);
     _pendingInvoice = { mode: 'pomodoro', minutes: totalMins, task: (taskText || '').trim(), finishMs: Date.now() };
+    persistPendingEndCard({ kind: 'pomodoro', totalSessions, workDuration, taskText: (taskText || '').trim() });
     document.getElementById('success-total-time').textContent = formatDurationArabic(totalMins);
     document.getElementById('success-sessions-count').textContent = totalSessions;
     const _sessRow = document.getElementById('success-sessions-count')?.parentElement;
@@ -5852,6 +5935,7 @@ function doLogout() {
     disconnectPresenceSocket();   // close the live-position relay; don't reconnect
     // Explicit logout — don't auto-resume on the next load.
     try { localStorage.removeItem(ACTIVE_SESSION_KEY); } catch (_) {}
+    clearPendingEndCard();
     if (gameState.userId) {
         if (gameState.isSirajGhost) {
             const cleanups = { [`users/${gameState.userId}`]: null };
@@ -9914,6 +9998,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #07070a;
 .pip-chip:hover { background: rgba(255,255,255,0.12); opacity: 0.6; }
 .pip-chip:active { transform: scale(0.9); }
 .pip-chip.active { background: rgba(59,185,171,0.24); border-color: rgba(59,185,171,0.4); color: rgba(120,230,215,0.95); opacity: 1; }
+.pip-chip svg { width: 14px; height: 14px; flex-shrink: 0; }
 .pip-chip.pip-chip-more { font-size: 15px; color: rgba(255,255,255,0.6); }
 #pip-yt { display: flex; align-items: center; gap: 4px; padding: 5px 6px;
   border-radius: 50px; background: rgba(18,18,18,0.62);
@@ -9957,16 +10042,23 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #07070a;
 #pip-root.praying #pip-controls { opacity: 0; pointer-events: none; }
 `;
 
-// Focus-sound chips for the PiP control bar. Emoji glyphs keep it tiny + language-neutral.
+// Focus-sound chips for the PiP control bar. Same SVG icons as the main focus
+// sounds panel (index.html #focus-sounds-panel) — cloned here so the two look
+// consistent instead of PiP using emoji and the panel using line icons.
 const PIP_SOUND_CHIPS = [
-  ['rain', '🌧', 'مطر'], ['rain_muffled', '🌫', 'مطر خافت'], ['fire', '🔥', 'موقد'],
-  ['forest', '🌲', 'غابة'], ['brown', '🟤', 'ضوضاء بنية'], ['wind', '💨', 'رياح'],
-  ['plane', '✈️', 'طائرة'], ['ocean', '🌊', 'بحر'],
+  ['rain', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><line x1="8" y1="16" x2="8" y2="20"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="16" y1="16" x2="16" y2="20"/></svg>', 'مطر'],
+  ['rain_muffled', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><path d="M8 19l1-3m3 1l1-3m3 1l1-3"/></svg>', 'مطر خافت'],
+  ['fire', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c-4.97 0-7-3.58-7-7 0-4 3.5-7.5 4-10.5 1 2 2.5 3 3.5 3C14.5 7.5 17 3 17 3s1 3.5 1 7c0 3.42-2.03 7-6 12z"/><path d="M10 17c0 1.1.9 2 2 2s2-.9 2-2c0-1.5-2-3-2-3s-2 1.5-2 3z"/></svg>', 'موقد'],
+  ['forest', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l-8 15h5v3h6v-3h5L12 3z"/><line x1="12" y1="22" x2="12" y2="18"/></svg>', 'غابة'],
+  ['brown', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/><path d="M2 17c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/><path d="M2 7c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/></svg>', 'ضوضاء بنية'],
+  ['wind', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>', 'رياح'],
+  ['plane', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3.5c-.5-.5-2.5 0-4 1.5L13.5 8.5l-8.2-1.8c-.9-.2-1.8.1-2.4.7l-.5.5c-.4.4-.3 1 .1 1.3l6.3 3.8-3.8 3.8-2.3-.5c-.6-.1-1.2.1-1.5.6l-.3.3c-.3.3-.2.8.2.9L5 20l.9 3.9c.1.4.6.5.9.2l.3-.3c.5-.3.7-.9.6-1.5l-.5-2.3 3.8-3.8 3.8 6.3c.3.4.9.5 1.3.1l.5-.5c.6-.6.9-1.5.7-2.4z"/></svg>', 'طائرة'],
+  ['ocean', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12c2-4 6-4 8 0s6 4 8 0"/><path d="M2 17c2-4 6-4 8 0s6 4 8 0"/><path d="M2 7c2-4 6-4 8 0s6 4 8 0"/></svg>', 'بحر'],
 ];
 
 function _pipBuildControlsHTML() {
-    const chips = PIP_SOUND_CHIPS.map(([key, emoji, label]) =>
-        `<button class="pip-chip" data-sound="${key}" title="${label}" aria-label="${label}">${emoji}</button>`
+    const chips = PIP_SOUND_CHIPS.map(([key, icon, label]) =>
+        `<button class="pip-chip" data-sound="${key}" title="${label}" aria-label="${label}">${icon}</button>`
     ).join('');
     const sliders = PIP_SOUND_CHIPS.map(([key, , label]) =>
         `<div class="pip-slider-row" data-snd-row="${key}"><div class="lbl"><span class="nm" data-snd-nm="${key}">${label}</span></div>` +
@@ -12679,6 +12771,7 @@ function showFreeModeSuccessModal(totalMins, taskText = '') {
     if (!modal) return;
     clearSuccessPhoto();   // each session starts with an empty photo slot
     _pendingInvoice = { mode: 'free', minutes: totalMins, task: (taskText || '').trim(), finishMs: Date.now() };
+    persistPendingEndCard({ kind: 'free', totalMins, taskText: (taskText || '').trim() });
 
     document.getElementById('success-total-time').textContent = formatDurationArabic(totalMins);
 
@@ -13615,16 +13708,12 @@ function initPrayerSystem() {
     // moment — keeps the prayer overlay from being interrupted by a browser prompt.
     maybeRequestNotificationPermission();
 
-    // On mobile, move prayer panel + YT inside the focus drawer for proper scrolling.
-    // Prayer panel comes first so it's visible as soon as the drawer opens,
-    // YT block comes after (scroll down to reach it).
-    if (isMobile()) {
-        const drawer = document.getElementById('focus-sounds-panel');
-        const yt = document.getElementById('yt-focus-block');
-        const pp = document.getElementById('prayer-panel');
-        if (drawer && pp) drawer.appendChild(pp);
-        if (drawer && yt) drawer.appendChild(yt);
-    }
+    // Prayer panel + YT block move inside the focus drawer on mobile for proper
+    // scrolling (prayer panel first so it's visible as soon as the drawer opens,
+    // YT block after). Handled by syncFocusDrawerParenting() (called from
+    // setMobileClass(), which already ran earlier at startup) so it also stays
+    // correct if the device switches modes later (resize / tablet rotation).
+    syncFocusDrawerParenting();
 
     // Read location from Firebase (city + country only — exact coords are never stored)
     get(ref(database, `users/${gameState.userId}/prayerLocation`)).then(snap => {
@@ -17953,6 +18042,41 @@ function setupSuccessCardUI() {
 
     // حفظ runs the save sequence (archives to Firebase, then rip + stamp + fly away).
     document.getElementById('success-save')?.addEventListener('click', runSaveSequence);
+
+    // تجاهل الجلسة — small link under حفظ. Click swaps it for an inline yes/no
+    // confirm (mirrors the .inv-del confirm pattern); confirming fades the whole
+    // card out and skips saveInvoice() entirely, so nothing reaches Firebase.
+    const discardLink = document.getElementById('success-discard');
+    const discardConfirm = document.getElementById('success-discard-confirm');
+    let discardConfirmTimer = null;
+    const resetDiscardConfirm = () => {
+        clearTimeout(discardConfirmTimer);
+        if (discardConfirm) discardConfirm.style.display = 'none';
+        if (discardLink) discardLink.style.display = '';
+    };
+    discardLink?.addEventListener('click', () => {
+        if (_saveSeqRunning) return;
+        discardLink.style.display = 'none';
+        if (discardConfirm) discardConfirm.style.display = 'inline-flex';
+        clearTimeout(discardConfirmTimer);
+        discardConfirmTimer = setTimeout(resetDiscardConfirm, 5000);
+    });
+    document.getElementById('success-discard-no')?.addEventListener('click', resetDiscardConfirm);
+    document.getElementById('success-discard-yes')?.addEventListener('click', () => {
+        clearTimeout(discardConfirmTimer);
+        discardSuccessCard();
+    });
+}
+
+// Fully discards the current session without saving it anywhere — just fades
+// the card out. Called from the تجاهل الجلسة confirm.
+function discardSuccessCard() {
+    _pendingInvoice = null;   // never persisted, so saveInvoice() has nothing to write
+    clearPendingEndCard();
+    const modal = document.getElementById('success-modal');
+    if (!modal) return;
+    modal.classList.add('success-fading');
+    setTimeout(() => modal.classList.remove('active', 'success-fading'), 850);
 }
 
 // ── End-card appear + حفظ (save) sequence ───────────────────────────────────
@@ -18010,6 +18134,7 @@ function runSaveSequence() {
     modal.style.overflow = 'hidden';
 
     saveInvoice();   // persist BEFORE tearing the card apart (reads the photo from the DOM)
+    clearPendingEndCard();   // saved — no longer needs to reopen on a reload
 
     if (saveBtn) { saveBtn.classList.remove('show'); saveBtn.classList.add('gone'); }   // slide down (stays in layout → no snap)
     if (addBtn) addBtn.style.display = 'none';
@@ -18359,6 +18484,9 @@ function _invReceiptHTML(data) {
     const subHtml  = ph ? `<span class="inv-scrib" style="width:38%"></span>` : escapeDashHtml(data.tag);
     const noteHtml = ph ? `<span class="inv-scrib" style="width:70%"></span>` : (data.task ? escapeDashHtml(data.task) : 'جلسة عمل');
     const dateHtml = ph ? '' : escapeDashHtml(data.dateStr);
+    // same ink-mark logo + opacity + corner as the end-of-session stamp (STAMP_LOGO,
+    // .success-stamp-imprint) so a saved memory card matches the invoice it came from.
+    const logoHtml = ph ? '' : `<img src="${STAMP_LOGO}" alt="" class="inv-r-logo">`;
     return `<div class="inv-receipt">
         <div class="inv-r-crop"></div>
         ${photo}
@@ -18370,6 +18498,7 @@ function _invReceiptHTML(data) {
         <div class="inv-r-note">${noteHtml}</div>
         <div class="inv-r-date">${dateHtml}</div>
         <div class="inv-r-barcode"><div class="inv-r-bars"></div><div class="inv-r-num">MDWNH · 1445</div></div>
+        ${logoHtml}
     </div>`;
 }
 
